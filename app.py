@@ -107,3 +107,58 @@ try:
         st.subheader("📝 오늘 주요 일정 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
+            with st.container(border=True):
+                st.markdown(f"### {row['시간']} | {row['행사명']}")
+                status = str(row['참석여부']).strip()
+                if status == "미체크":
+                    c1, c2 = st.columns(2)
+                    if c1.button("🟢 참석", key=f"at_{orig_idx}"):
+                        update_sheet_status(orig_idx, "참석")
+                        st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
+                        time.sleep(1); st.rerun()
+                    if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
+                        update_sheet_status(orig_idx, "불참석")
+                        time.sleep(1); st.rerun()
+                elif status == "불참석":
+                    st.error(f"결과: {status}")
+                    if st.button("🔄 재선택 (복구)", key=f"re_{orig_idx}"):
+                        update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                else:
+                    st.success(f"결과: {status}")
+                    if st.button("🔄 재선택", key=f"re_{orig_idx}"):
+                        update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
+
+    # [5] 영등포구 지역구별 수치 분석 (맨 아래 배치)
+    st.divider()
+    st.subheader("📊 선거 운동 누적 활동 분석")
+    
+    analysis_df = df.copy()
+    analysis_df[['지역구', '행정동']] = analysis_df.apply(lambda x: pd.Series(get_district_info(str(x['주소']))), axis=1)
+
+    sum_tab, detail_tab, map_tab = st.tabs(["🏛️ 지역구 요약", "🏘️ 행정동 상세", "🗺️ 누적 활동 지도"])
+
+    with sum_tab:
+        summary = analysis_df.groupby(['지역구', '참석여부']).size().unstack(fill_value=0)
+        for col in ['참석', '불참석', '미체크']:
+            if col not in summary.columns: summary[col] = 0
+        st.table(summary[['참석', '불참석', '미체크']])
+
+    with detail_tab:
+        detail_summary = analysis_df.groupby(['지역구', '행정동', '참석여부']).size().unstack(fill_value=0)
+        for col in ['참석', '불참석', '미체크']:
+            if col not in detail_summary.columns: detail_summary[col] = 0
+        st.dataframe(detail_summary[['참석', '불참석', '미체크']], use_container_width=True)
+
+    with map_tab:
+        st.caption("파랑: 참석, 빨강: 불참석 (미체크 제외)")
+        all_map_df = df[df['참석여부'].isin(['참석', '불참석']) & df['위도'].notna()]
+        if not all_map_df.empty:
+            m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=12)
+            for _, r in all_map_df.iterrows():
+                m_color = 'blue' if r['참석여부'] == '참석' else 'red'
+                folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color)).add_to(m_all)
+            folium_static(m_all)
+
+except Exception as e:
+    st.error(f"오류: {e}")

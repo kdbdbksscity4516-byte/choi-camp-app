@@ -18,6 +18,7 @@ now_kst = datetime.now(KST)
 st.set_page_config(page_title="최웅식 후보자님 동선", layout="centered")
 
 def update_sheet_status(row_idx, status_text):
+    # 업데이트 시 타임스탬프를 함께 보내도록 설계 (이미 앱스크립트에 포함되어 있음)
     api_url = f"{script_url}?row={row_idx}&status={urllib.parse.quote(status_text)}"
     try:
         res = requests.get(api_url, timeout=15)
@@ -28,7 +29,7 @@ def update_sheet_status(row_idx, status_text):
     return False
 
 try:
-    # 데이터 로드
+    # 데이터 강제 로드
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
@@ -52,54 +53,54 @@ try:
     day_df = df[df['날짜_str'] == selected_date].copy().reset_index()
     
     if not day_df.empty:
-        # 시간 형식 통일
+        # 시간 데이터 변환 (정렬용)
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
+        # 참석시간 데이터 변환 (가장 최근 방문지 확인용)
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # --- [로직 핵심: 시간 그룹 내 거리 정렬] ---
-        # 1. 오늘 일정 중 가장 마지막으로 '참석'한 곳의 좌표 찾기 (전체 기준점)
-        last_attended_all = day_df[day_df['참석여부'] == '참석'].sort_values('참석시간_dt')
-        global_ref = None
-        if not last_attended_all.empty:
-            row = last_attended_all.iloc[-1]
-            if not pd.isna(row['위도']): global_ref = (row['위도'], row['경도'])
+        # --- [가장 중요한 실시간 기준점 설정] ---
+        # 오늘 일정 중 '참석' 상태인 것들만 추려서 '참석시간'이 가장 늦은(최근인) 행을 찾습니다.
+        attended_only = day_df[day_df['참석여부'] == '참석'].dropna(subset=['참석시간_dt'])
+        
+        last_ref_coords = None
+        if not attended_only.empty:
+            # 가장 최근에 누른 곳이 맨 위로 오게 정렬 후 첫 번째 행 선택
+            latest_row = attended_only.sort_values('참석시간_dt', ascending=False).iloc[0]
+            if not pd.isna(latest_row['위도']):
+                last_ref_coords = (latest_row['위도'], latest_row['경도'])
 
-        # 2. 시간대별 그룹핑
+        # 시간대별 그룹핑
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
-        current_ref = global_ref
 
         for t in times:
             group = day_df[day_df['temp_time_dt'] == t].copy()
             
-            # 참석완료(누른 순서)
+            # 1. 참석 그룹: 누른 시간 순서대로 정렬
             group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
             
-            # 미체크(현재 기준점 current_ref에서 가까운 순)
+            # 2. 미체크 그룹: 위에서 찾은 '최근 방문지(last_ref_coords)' 기준으로 정렬
             group_pending = group[group['참석여부'] == '미체크'].copy()
             if not group_pending.empty:
-                if current_ref:
+                if last_ref_coords:
                     group_pending['dist'] = group_pending.apply(
-                        lambda r: geodesic(current_ref, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 9999999, axis=1
+                        lambda r: geodesic(last_ref_coords, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 9999999, axis=1
                     )
                     group_pending = group_pending.sort_values('dist')
                 else:
+                    # 오늘 아무것도 안 눌렀다면 시트 입력 순서대로
                     group_pending['dist'] = 0
             
+            # 3. 불참석 그룹
             group_no = group[group['참석여부'] == '불참석']
             
-            # 시간대 내 정합체 생성
+            # 합체
             sorted_group = pd.concat([group_att, group_pending, group_no])
             final_list.append(sorted_group)
-            
-            # 다음 시간대를 위한 기준점 업데이트: 이 시간대 마지막 유효 위치
-            valid_rows = sorted_group[sorted_group['참석여부'] != '불참석']
-            if not valid_rows.empty and not pd.isna(valid_rows.iloc[-1]['위도']):
-                current_ref = (valid_rows.iloc[-1]['위도'], valid_rows.iloc[-1]['경도'])
 
         display_df = pd.concat(final_list)
 
-        # --- 지도 및 리스트 출력 ---
+        # 지도 및 리스트 출력 (이전과 동일)
         st.subheader("📍 실시간 동선 지도")
         m_df = display_df[display_df['참석여부'] != '불참석']
         m_df = m_df[m_df['위도'].notna() & m_df['경도'].notna()]
@@ -120,13 +121,19 @@ try:
                 if status == "미체크":
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
-                        if update_sheet_status(orig_idx, "참석"): st.rerun()
+                        if update_sheet_status(orig_idx, "참석"): 
+                            time.sleep(1) # 시트 반영 시간을 위해 아주 잠깐 대기
+                            st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
-                        if update_sheet_status(orig_idx, "불참석"): st.rerun()
+                        if update_sheet_status(orig_idx, "불참석"): 
+                            time.sleep(1)
+                            st.rerun()
                 else:
                     st.success(f"결과: {status}")
                     if st.button("🔄 재선택", key=f"re_{orig_idx}"):
-                        if update_sheet_status(orig_idx, "미체크"): st.rerun()
+                        if update_sheet_status(orig_idx, "미체크"): 
+                            time.sleep(1)
+                            st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
     else:
         st.info("선택한 날짜에 일정이 없습니다.")

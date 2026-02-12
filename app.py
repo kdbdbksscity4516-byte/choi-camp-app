@@ -7,7 +7,7 @@ from geopy.distance import geodesic
 import folium
 from streamlit_folium import folium_static
 
-# 1. 설정 정보 (주소는 사무장님 주소 그대로 유지)
+# 1. 설정 정보
 sheet_url = "https://docs.google.com/spreadsheets/d/1XsTB4nUPL03xba1cEGYGUsyNZcmsdFEGEU2S-6DfpL4/export?format=csv"
 script_url = "https://script.google.com/macros/s/AKfycbzlPtAOqvz0wSgbspGz9PbZuDcdd-BBtbbep_uEtCFTaBd4vYG5Pu6jo0dkESkVBIgI/exec"
 
@@ -30,6 +30,7 @@ st.markdown("""<style> div.stButton > button { width: 100% !important; height: 5
 st.title("🚩 최웅식 캠프 실시간 동선")
 
 try:
+    # 데이터 불러오기
     df = pd.read_csv(f"{sheet_url}&t={now_kst.timestamp()}")
     df = df.fillna("")
     df['위도'] = pd.to_numeric(df['위도'], errors='coerce')
@@ -48,47 +49,57 @@ try:
     day_df = df[df['날짜_dt'] == selected_date].copy().reset_index()
     
     if not day_df.empty:
-        # --- [동선 정렬 로직] ---
+        # --- [보강된 동선 정렬 로직] ---
         times = sorted(day_df['temp_time'].unique())
         final_list = []
         last_ref_coords = None
         
-        # 기준점 찾기
-        attended_events = day_df[day_df['참석여부'] == '참석'].sort_values('temp_time')
-        if not attended_events.empty and not pd.isna(attended_events.iloc[-1]['위도']):
-            last_ref_coords = (attended_events.iloc[-1]['위도'], attended_events.iloc[-1]['경도'])
+        # 1순위 기준점: 전체 일정 중 가장 마지막으로 '참석'한 곳
+        attended_total = day_df[day_df['참석여부'] == '참석'].sort_values(['temp_time', 'index'])
+        if not attended_total.empty and not pd.isna(attended_total.iloc[-1]['위도']):
+            last_ref_coords = (attended_total.iloc[-1]['위도'], attended_total.iloc[-1]['경도'])
 
         for t in times:
             group = day_df[day_df['temp_time'] == t].copy()
-            if not (group['참석여부'].isin(['참석', '불참석'])).any() and last_ref_coords:
+            
+            # 거리 계산 (이전 시간대 종착지 or 마지막 참석지 기준)
+            if last_ref_coords:
                 group['dist'] = group.apply(lambda r: geodesic(last_ref_coords, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
-                group = group.sort_values('dist')
+            else:
+                group['dist'] = 0
+
+            # 정렬 우선순위: 1.참석 > 2.미체크 > 3.불참석 순서이며, 같은 상태 내에서는 거리순
+            def get_priority(status):
+                if status == '참석': return 0
+                if status == '불참석': return 2
+                return 1 # 미체크 및 기타
+
+            group['priority'] = group['참석여부'].apply(get_priority)
+            group = group.sort_values(by=['priority', 'dist'])
+            
             final_list.append(group)
-            if not group.empty:
-                # 다음 기준점: 이 시간대의 '참석' 중 마지막 것, 없으면 1등
-                att_in_g = group[group['참석여부'] == '참석']
-                target = att_in_g.iloc[-1] if not att_in_g.empty else group.iloc[0]
-                if not pd.isna(target['위도']):
-                    last_ref_coords = (target['위도'], target['경도'])
+            
+            # 다음 시간대를 위한 기준점 업데이트
+            # 이 시간대 그룹의 마지막 '참석' 지점, 없으면 이 그룹의 1등(가장 가까운 곳)
+            att_in_group = group[group['참석여부'] == '참석']
+            target = att_in_group.iloc[-1] if not att_in_group.empty else group.iloc[0]
+            if not pd.isna(target['위도']):
+                last_ref_coords = (target['위도'], target['경도'])
 
         display_df = pd.concat(final_list)
 
         # --- [1. 지도 표시 섹션] ---
         st.subheader("📍 실시간 동선 지도")
-        
-        # 유효한 좌표가 있는 일정만 추출하여 선 긋기
-        map_df = display_df[display_df['위도'].notna() & display_df['경도'].notna()].copy()
+        # 지도는 '참석'하거나 '미체크'인 것만 선으로 연결 (불참석은 제외)
+        map_df = display_df[display_df['참석여부'] != '불참석'].copy()
+        map_df = map_df[map_df['위도'].notna() & map_df['경도'].notna()]
         
         if not map_df.empty:
-            # 지도 중심점 (첫 번째 일정 기준)
-            m = folium.Map(location=[map_df.iloc[0]['위도'], map_df.iloc[0]['경도']], zoom_start=12)
-            
+            m = folium.Map(location=[map_df.iloc[0]['위도'], map_df.iloc[0]['경도']], zoom_start=11)
             points = []
-            for i, (_, row) in enumerate(map_df.iterrows()):
+            for _, row in map_df.iterrows():
                 coord = [row['위도'], row['경도']]
                 points.append(coord)
-                
-                # 마커 색상: 참석은 파란색, 미체크는 빨간색
                 color = 'blue' if row['참석여부'] == '참석' else 'red'
                 folium.Marker(
                     location=coord,
@@ -96,13 +107,11 @@ try:
                     icon=folium.Icon(color=color, icon='info-sign')
                 ).add_to(m)
             
-            # 빨간 실선 긋기 (동선 연결)
             if len(points) > 1:
                 folium.PolyLine(points, color="red", weight=3, opacity=0.8).add_to(m)
-            
             folium_static(m)
         else:
-            st.info("좌표 정보가 없어 지도를 표시할 수 없습니다.")
+            st.info("표시할 동선이 없습니다.")
 
         st.divider()
 

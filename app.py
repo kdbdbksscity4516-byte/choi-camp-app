@@ -10,26 +10,28 @@ script_url = "https://script.google.com/macros/s/AKfycbxCGd8QvYAquyvkgb9fmc57XnE
 
 st.set_page_config(page_title="최웅식 캠프 실시간 보고", layout="centered")
 
-# CSS: 새로고침 버튼을 우측 상단에 예쁘게 배치하고 버튼 디자인 조정
+# CSS: 모든 버튼을 가로로 꽉 차게 만들고 여백 조정
 st.markdown("""
     <style>
-    .stButton > button { width: 100% !important; }
-    /* 새로고침 버튼 전용 스타일 */
-    .refresh-btn > div > button {
-        background-color: #f0f2f6 !important;
-        color: #31333F !important;
-        border-radius: 20px !important;
-        border: 1px solid #dcdde1 !important;
+    /* 모든 버튼 가로 100% */
+    .stButton > button {
+        width: 100% !important;
+        height: 50px !important; /* 높이도 조금 더 키워서 누르기 편하게 */
+        font-size: 16px !important;
+        margin-top: 5px !important;
+    }
+    /* 성공/에러 박스도 가로 꽉 차게 */
+    .stAlert {
+        width: 100% !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 상단 헤더 및 새로고침 버튼 ---
+# 상단 헤더 및 새로고침
 head_col1, head_col2 = st.columns([3, 1])
 with head_col1:
     st.title("🚩 캠프 보고")
 with head_col2:
-    st.write("") # 간격 맞춤용
     if st.button("🔄 새로고침", key="refresh_top"):
         st.rerun()
 
@@ -48,7 +50,6 @@ def update_sheet_status(row_idx, status_text):
     return False
 
 try:
-    # 실시간 데이터 로드 (캐시 무시)
     df = pd.read_csv(f"{sheet_url}&t={datetime.now().timestamp()}")
     df = df.fillna("")
 
@@ -73,23 +74,24 @@ try:
                 current_status = str(row.get('참석여부', '')).strip()
                 if current_status not in ["참석", "불참"]: current_status = "미체크"
 
-                # 3. 버튼 레이아웃
+                # 3. 버튼 레이아웃 (가로로 길게 위아래 배치)
                 if current_status == "미체크":
-                    c1, c2 = st.columns(2)
-                    if c1.button("🟢 참석", key=f"at_{idx}"):
+                    # 컬럼을 나누지 않고 바로 버튼을 배치하여 가로를 꽉 채움
+                    if st.button("🟢 참석 완료", key=f"at_{idx}"):
                         if update_sheet_status(idx, "참석"): st.rerun()
-                    if c2.button("🔴 불참", key=f"no_{idx}"):
+                    if st.button("🔴 불참 (취소)", key=f"no_{idx}"):
                         if update_sheet_status(idx, "불참"): st.rerun()
                 else:
-                    r_col, e_col = st.columns([2, 1])
-                    with r_col:
-                        if current_status == "참석": st.success(f"✅ {current_status}")
-                        else: st.error(f"✅ {current_status}")
-                    with e_col:
-                        if st.button("🔄 수정", key=f"ed_{idx}"):
-                            if update_sheet_status(idx, "미체크"): st.rerun()
+                    # 선택 완료 시에도 가로로 배치
+                    if current_status == "참석":
+                        st.success(f"✅ 현재 상태: {current_status}")
+                    else:
+                        st.error(f"✅ 현재 상태: {current_status}")
+                    
+                    if st.button("🔄 기록 수정하기", key=f"ed_{idx}"):
+                        if update_sheet_status(idx, "미체크"): st.rerun()
 
-                # 4. 내비 버튼
-                st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}", use_container_width=True)
+                # 4. 내비 버튼 (항상 가로 꽉 참)
+                st.link_button("🚕 카카오내비 실행", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}", use_container_width=True)
 except Exception as e:
-    st.error("데이터를 불러오는 중...")
+    st.error("데이터 로드 중...")

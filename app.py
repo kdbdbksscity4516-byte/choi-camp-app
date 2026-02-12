@@ -33,7 +33,6 @@ try:
                 addr_val = str(row.get('주소', '')).strip()
                 
                 if addr_val and addr_val != 'nan':
-                    # 주소만 깔끔하게 리스트에 담기
                     addr_list.append(addr_val)
 
                 with st.container():
@@ -42,21 +41,27 @@ try:
                     with col2:
                         st.subheader(f"{title_val}")
                         st.write(f"📍 {addr_val}")
-                        # 개별 내비는 가장 심플하게 주소 검색으로 연결
                         st.link_button(f"🚕 내비 연결", f"https://map.kakao.com/link/search/{urllib.parse.quote(addr_val)}", use_container_width=True)
                     st.divider()
             
-            # --- 전체 경로 보기 로직 (가장 심플한 지도 공유 모드) ---
+            # --- 경로 보기 로직 수정 (카카오맵 길찾기 웹 브라우저 방식) ---
             if len(addr_list) >= 2:
-                # 구글 맵의 '길찾기' 모드가 한국에서 선이 안 나오면, 
-                # 카카오맵의 '여러 지점 표시' 기능을 활용합니다.
-                # 주소들을 '/'로 연결하여 카카오맵 검색에 넣으면 지도에 핀들이 찍힙니다.
-                combined_addr = "/".join(addr_list)
-                kakao_multi_url = f"https://map.kakao.com/?q={urllib.parse.quote(combined_addr)}"
+                # 첫 번째 주소를 출발지, 마지막을 도착지로 하고 나머지를 경유지로 보냅니다.
+                start = urllib.parse.quote(addr_list[0])
+                end = urllib.parse.quote(addr_list[-1])
                 
-                st.success("✅ 전체 동선 확인 준비 완료")
-                st.link_button(f"🗺️ {selected_date} 전체 경로 지도에서 보기", kakao_multi_url, use_container_width=True, type="primary")
-                st.caption("※ 지도 앱이 열리면 검색 결과로 나온 장소들을 확인해 주세요.")
+                # 웹에서 바로 길찾기 결과를 보여주는 가장 확실한 링크입니다.
+                # 모바일에서도 카카오맵 웹페이지가 열리며 경로가 그려집니다.
+                kakao_route_url = f"https://map.kakao.com/?sName={start}&eName={end}"
+                
+                if len(addr_list) > 2:
+                    # 경유지 추가 (vNames 파라미터 활용)
+                    v_names = "|".join([urllib.parse.quote(a) for a in addr_list[1:-1]])
+                    kakao_route_url += f"&vNames={v_names}"
+
+                st.success("✅ 동선 지도가 준비되었습니다.")
+                st.link_button(f"🗺️ {selected_date} 전체 경로 확인 (지도)", kakao_route_url, use_container_width=True, type="primary")
+                st.caption("※ 버튼 클릭 후 '자동차' 아이콘을 누르면 선이 그려집니다.")
         else:
             st.warning("일정이 없습니다.")
 except Exception as e:

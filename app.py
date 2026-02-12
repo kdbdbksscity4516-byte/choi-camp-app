@@ -7,6 +7,7 @@ from geopy.distance import geodesic
 import folium
 from streamlit_folium import folium_static
 import time
+import streamlit.components.v1 as components
 
 # 1. 설정 및 세션 상태 초기화
 sheet_url = "https://docs.google.com/spreadsheets/d/1XsTB4nUPL03xba1cEGYGUsyNZcmsdFEGEU2S-6DfpL4/export?format=csv"
@@ -28,7 +29,7 @@ def update_sheet_status(row_idx, status_text):
     except: return False
 
 try:
-    # 2. 데이터 로드 (캐시 무력화)
+    # 2. 데이터 로드
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
@@ -38,9 +39,12 @@ try:
 
     st.title("🚩 최웅식 후보자님 실시간 동선")
 
-    if st.button("🔄 데이터 새로고침"):
-        st.cache_data.clear()
-        st.rerun()
+    # --- [사무장님 요청: 브라우저 F5 강제 새로고침 버튼] ---
+    if st.button("🔄 전체 새로고침 (F5)"):
+        # 자바스크립트를 이용해 페이지를 완전히 새로고침합니다.
+        components.html("<script>window.parent.location.reload();</script>", height=0)
+        st.stop()
+    # ---------------------------------------------------
 
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
@@ -53,7 +57,6 @@ try:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # 기준점 설정
         current_anchor = None
         if st.session_state.last_lat:
             current_anchor = (st.session_state.last_lat, st.session_state.last_lon)
@@ -63,7 +66,6 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
-        # 리스트 정렬 로직
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
@@ -78,25 +80,18 @@ try:
 
         display_df = pd.concat(final_list)
 
-        # 3. 지도 출력 (불참석 제외 및 리스트 순서 동기화)
+        # 3. 지도 출력 (리스트 순서와 동기화 및 불참석 제외)
         st.subheader("📍 실시간 동선 지도")
         map_draw_df = display_df[display_df['참석여부'].isin(['참석', '미체크'])]
         map_draw_df = map_draw_df[map_draw_df['위도'].notna() & map_draw_df['경도'].notna()]
         
         if not map_draw_df.empty:
-            # 첫 번째 마커 위치로 지도 중심 설정 (수정된 부분: 위0 -> 위도)
             m = folium.Map(location=[map_draw_df.iloc[0]['위도'], map_draw_df.iloc[0]['경도']], zoom_start=11)
             pts = []
-            
             for _, r in map_draw_df.iterrows():
                 icon_color = 'blue' if r['참석여부'] == '참석' else 'red'
-                folium.Marker(
-                    [r['위도'], r['경0' if False else '경도']], # 안전하게 경도 확인
-                    popup=f"{r['시간']} {r['행사명']}", 
-                    icon=folium.Icon(color=icon_color)
-                ).add_to(m)
+                folium.Marker([r['위도'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=icon_color)).add_to(m)
                 pts.append([r['위도'], r['경도']])
-            
             if len(pts) > 1:
                 folium.PolyLine(pts, color="red", weight=3, opacity=0.8).add_to(m)
             folium_static(m)

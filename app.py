@@ -16,7 +16,7 @@ script_url = "https://script.google.com/macros/s/AKfycbzlPtAOqvz0wSgbspGz9PbZuDc
 KST = timezone(timedelta(hours=9))
 now_kst = datetime.now(KST)
 
-st.set_page_config(page_title="최웅식 후보자님 동선", layout="centered")
+st.set_page_config(page_title="최웅식 후보자님 동선 관리", layout="wide") # 지도를 나란히 보거나 넓게 보기 위해 wide 설정
 
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
 if 'last_lon' not in st.session_state: st.session_state.last_lon = None
@@ -29,6 +29,7 @@ def update_sheet_status(row_idx, status_text):
     except: return False
 
 try:
+    # 데이터 로드
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
@@ -36,20 +37,22 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    st.title("🚩 최웅식 후보자님 실시간 동선")
+    st.title("🚩 최웅식 후보자님 실시간 동선 & 활동 분석")
 
     if st.button("🔄 전체 새로고침 (F5)"):
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
+    # --- 상단: 날짜별 상세 동선 섹션 ---
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
     default_idx = available_dates.index(today_str) if today_str in available_dates else 0
-    selected_date = st.selectbox("🗓️ 날짜 선택", available_dates, index=default_idx)
+    selected_date = st.selectbox("🗓️ 상세 동선 날짜 선택", available_dates, index=default_idx)
 
     day_df = df[df['날짜_str'] == selected_date].copy().reset_index()
 
     if not day_df.empty:
+        # (기존 정렬 로직 및 상세 지도 생성 부분 동일)
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
@@ -62,7 +65,6 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
-        # 리스트 정렬 로직 (이전과 동일하게 유지)
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
@@ -77,69 +79,71 @@ try:
 
         display_df = pd.concat(final_list)
 
-        # 3. 지도 출력 (마커 색상 및 선 연결 로직 수정)
-        st.subheader("📍 실시간 동선 지도")
-        # 모든 항목(참석, 미체크, 불참석) 중 좌표가 있는 것들
-        map_df = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
-        
-        if not map_df.empty:
-            m = folium.Map(location=[map_df.iloc[0]['위도'], map_df.iloc[0]['경도']], zoom_start=11)
-            line_pts = [] # 선을 그을 좌표들 (참석, 미체크만 포함)
-            
-            for _, r in map_df.iterrows():
-                # 상태별 마커 설정
-                if r['참석여부'] == '참석':
-                    m_color = 'blue'
-                    m_icon = 'check'
-                    line_pts.append([r['위도'], r['경도']]) # 선 연결 포함
-                elif r['참석여부'] == '미체크':
-                    m_color = 'gray'
-                    m_icon = 'time'
-                    line_pts.append([r['위도'], r['경도']]) # 선 연결 포함
-                else: # 불참석
-                    m_color = 'red'
-                    m_icon = 'remove'
-                    # 불참석은 line_pts에 추가하지 않음 (선에서 제외)
+        st.subheader(f"📍 {selected_date} 상세 이동 경로")
+        map_df_today = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
+        if not map_df_today.empty:
+            m_today = folium.Map(location=[map_df_today.iloc[0]['위도'], map_df_today.iloc[0]['경도']], zoom_start=12)
+            line_pts = []
+            for _, r in map_df_today.iterrows():
+                if r['참석여부'] == '참석': m_color, m_icon, add_line = 'blue', 'check', True
+                elif r['참석여부'] == '미체크': m_color, m_icon, add_line = 'gray', 'time', True
+                else: m_color, m_icon, add_line = 'red', 'remove', False
                 
-                folium.Marker(
-                    [r['위도'], r['경도']], 
-                    popup=f"[{r['참석여부']}] {r['시간']} {r['행사명']}", 
-                    icon=folium.Icon(color=m_color, icon=m_icon)
-                ).add_to(m)
-            
-            # 실시간 동선 선 긋기 (참석 -> 미체크 순서대로)
-            if len(line_pts) > 1:
-                folium.PolyLine(line_pts, color="red", weight=3, opacity=0.8).add_to(m)
-            folium_static(m)
+                folium.Marker([r['위도'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_today)
+                if add_line: line_pts.append([r['위도'], r['경도']])
+            if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
+            folium_static(m_today)
 
-        # 4. 일정 리스트 출력 (기존 기능 유지)
-        for _, row in display_df.iterrows():
-            orig_idx = row['index']
-            with st.container(border=True):
-                st.markdown(f"### {row['시간']} | {row['행사명']}")
-                st.caption(f"📍 {row['주소']}")
-                status = str(row['참석여부']).strip()
-                
-                if status == "미체크":
-                    c1, c2 = st.columns(2)
-                    if c1.button("🟢 참석", key=f"at_{orig_idx}"):
-                        update_sheet_status(orig_idx, "참석")
-                        st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
-                        time.sleep(1); st.rerun()
-                    if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
-                        update_sheet_status(orig_idx, "불참석")
-                        time.sleep(1); st.rerun()
-                elif status == "불참석":
-                    st.error(f"결과: {status}")
-                    if st.button("🔄 재선택 (복구)", key=f"re_{orig_idx}"):
-                        update_sheet_status(orig_idx, "미체크")
-                        time.sleep(1); st.rerun()
-                else: 
-                    st.success(f"결과: {status}")
-                    if st.button("🔄 재선택", key=f"re_{orig_idx}"):
-                        update_sheet_status(orig_idx, "미체크")
-                        time.sleep(1); st.rerun()
-                st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
+    # --- [새로운 섹션: 전 기간 누적 활동 지도] ---
+    st.divider()
+    st.subheader("📊 선거 운동 누적 활동 분석 (전체 일정)")
+    st.info("전체 일정의 마커 분포입니다. 파란색이 밀집된 곳은 집중 지역, 빨간색/회색이 많은 곳은 보완이 필요한 지역입니다.")
+    
+    all_map_df = df[df['위도'].notna() & df['경도'].notna()]
+    if not all_map_df.empty:
+        # 전체를 조망할 수 있도록 줌 레벨 조정
+        m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=11)
+        
+        for _, r in all_map_df.iterrows():
+            if r['참석여부'] == '참석': m_color, m_icon = 'blue', 'check'
+            elif r['참석여부'] == '불참석': m_color, m_icon = 'red', 'remove'
+            else: m_color, m_icon = 'gray', 'time'
+            
+            folium.Marker(
+                [r['위도'], r['경도']], 
+                popup=f"{r['날짜']} | {r['행사명']}", 
+                icon=folium.Icon(color=m_color, icon=m_icon)
+            ).add_to(m_all)
+        
+        folium_static(m_all)
+
+    # --- 하단: 일정 리스트 (이전과 동일) ---
+    st.divider()
+    st.subheader("📝 오늘 주요 일정 리스트")
+    for _, row in display_df.iterrows():
+        # (리스트 출력 코드 동일...)
+        orig_idx = row['index']
+        with st.container(border=True):
+            st.markdown(f"### {row['시간']} | {row['행사명']}")
+            status = str(row['참석여부']).strip()
+            if status == "미체크":
+                c1, c2 = st.columns(2)
+                if c1.button("🟢 참석", key=f"at_{orig_idx}"):
+                    update_sheet_status(orig_idx, "참석")
+                    st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
+                    time.sleep(1); st.rerun()
+                if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
+                    update_sheet_status(orig_idx, "불참석")
+                    time.sleep(1); st.rerun()
+            elif status == "불참석":
+                st.error(f"결과: {status}")
+                if st.button("🔄 재선택 (복구)", key=f"re_{orig_idx}"):
+                    update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+            else:
+                st.success(f"결과: {status}")
+                if st.button("🔄 재선택", key=f"re_{orig_idx}"):
+                    update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+            st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
 except Exception as e:
     st.error(f"오류: {e}")

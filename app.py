@@ -54,27 +54,69 @@ try:
     day_df = df[df['날짜_dt'] == selected_date].copy().reset_index()
     
     if not day_df.empty:
-        # 참석시간 데이터 정밀 변환
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # --- [지도용 선긋기 순서 데이터 생성] ---
-        # 1. '참석' 지점들만 따로 뽑아 누른 시간 순서대로 정렬 (이게 실제 이동 경로)
-        attended_points = day_df[day_df['참석여부'] == '참석'].sort_values(by=['참석시간_dt', 'index']).copy()
+        # --- [거리순 및 참석순 정렬 로직 시작] ---
+        times = sorted(day_df['temp_time_dt'].unique())
+        final_list = []
+        last_ref_coords = None
         
-        # 2. '미체크' 지점들은 원래 하던 대로 시간순 -> 거리순 정렬
-        pending_points = day_df[day_df['참석여부'] == '미체크'].sort_values(by=['temp_time_dt', 'index']).copy()
-        
-        # 3. 지도용 데이터 합치기 (참석지가 무조건 먼저, 그 다음 미체크)
-        # ※ 이렇게 하면 부산을 먼저 누르면 부산이 선의 앞부분에 옵니다.
-        map_df_final = pd.concat([attended_points, pending_points])
-        map_df_final = map_df_final[map_df_final['위도'].notna() & map_df_final['경도'].notna()]
+        # 전체 일정 중 가장 마지막으로 '참석' 누른 위치를 초기 기준점으로 설정
+        last_attended_all = day_df[day_df['참석여부'] == '참석'].sort_values('참석시간_dt')
+        if not last_attended_all.empty:
+            target = last_attended_all.iloc[-1]
+            if not pd.isna(target['위도']):
+                last_ref_coords = (target['위도'], target['경도'])
 
-        # --- 지도 섹션 ---
+        for t in times:
+            group = day_df[day_df['temp_time_dt'] == t].copy()
+            
+            # 거리 계산용 함수
+            def get_dist(row, ref):
+                if ref and not pd.isna(row['위도']):
+                    return geodesic(ref, (row['위도'], row['경도'])).meters
+                return 9999999
+
+            # 1. 참석 그룹: 누른 시간 순서대로
+            group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
+            
+            # 참석 그룹이 있다면 그 마지막 지점을 다음 기준점으로 업데이트
+            if not group_att.empty:
+                last_ref_coords = (group_att.iloc[-1]['위도'], group_att.iloc[-1]['경도'])
+            
+            # 2. 미체크 그룹: 현재 기준점에서 가까운 순서대로
+            group_pending = group[group['참석여부'] == '미체크'].copy()
+            if not group_pending.empty:
+                group_pending['dist'] = group_pending.apply(lambda r: get_dist(r, last_ref_coords), axis=1)
+                group_pending = group_pending.sort_values('dist')
+                # 미체크 중 가장 가까운 곳을 다음 기준점으로 (예측 동선)
+                if last_ref_coords is None and not pd.isna(group_pending.iloc[0]['위도']):
+                     last_ref_coords = (group_pending.iloc[0]['위도'], group_pending.iloc[0]['경도'])
+
+            # 3. 불참석 그룹
+            group_no = group[group['참석여부'] == '불참석']
+
+            # 합치기
+            sorted_group = pd.concat([group_att, group_pending, group_no])
+            final_list.append(sorted_group)
+            
+            # 다음 시간대를 위해 이 시간대의 마지막 유효 좌표를 기준점으로
+            if not sorted_group.empty:
+                valid = sorted_group[sorted_group['참석여부'] != '불참석']
+                if not valid.empty and not pd.isna(valid.iloc[-1]['위도']):
+                    last_ref_coords = (valid.iloc[-1]['위도'], valid.iloc[-1]['경도'])
+
+        display_df = pd.concat(final_list)
+
+        # --- 지도 섹션: 정렬된 순서대로 선 긋기 ---
         st.subheader("📍 실시간 동선 지도")
-        if not map_df_final.empty:
-            m = folium.Map(location=[map_df_final.iloc[0]['위도'], map_df_final.iloc[0]['경도']], zoom_start=11)
+        map_df = display_df[display_df['참석여부'] != '불참석'].copy()
+        map_df = map_df[map_df['위도'].notna() & map_df['경도'].notna()]
+        
+        if not map_df.empty:
+            m = folium.Map(location=[map_df.iloc[0]['위도'], map_df.iloc[0]['경도']], zoom_start=11)
             points = []
-            for _, row in map_df_final.iterrows():
+            for _, row in map_df.iterrows():
                 coord = [row['위도'], row['경도']]
                 points.append(coord)
                 color = 'blue' if row['참석여부'] == '참석' else 'red'
@@ -86,19 +128,7 @@ try:
 
         st.divider()
 
-        # --- [리스트 표시용 정렬 로직: 시간대별 그룹 유지] ---
-        times = sorted(day_df['temp_time_dt'].unique())
-        display_list = []
-        for t in times:
-            group = day_df[day_df['temp_time_dt'] == t].copy()
-            # 리스트는 보기 편하게 '참석'이 위로 오고 그 안에서는 누른 순서
-            group['prio'] = group['참석여부'].apply(lambda x: 0 if x == '참석' else 2 if x == '불참석' else 1)
-            group = group.sort_values(by=['prio', '참석시간_dt'])
-            display_list.append(group)
-        
-        display_df = pd.concat(display_list)
-
-        # --- 일정 상세 리스트 ---
+        # --- 리스트 섹션 ---
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
@@ -125,3 +155,4 @@ try:
         st.warning("데이터가 없습니다.")
 except Exception as e:
     st.error(f"오류 발생: {e}")
+    

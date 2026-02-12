@@ -110,3 +110,28 @@ try:
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
                         update_sheet_status(orig_idx, "참석")
+                        st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
+                        time.sleep(1); st.rerun()
+                    if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
+                        update_sheet_status(orig_idx, "불참석"); time.sleep(1); st.rerun()
+                elif status == "불참석":
+                    st.error(f"결과: {status}")
+                    if st.button("🔄 재선택 (복구)", key=f"re_no_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                else:
+                    st.success(f"결과: {status}")
+                    if st.button("🔄 재선택", key=f"re_at_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
+
+    st.divider()
+    st.subheader("📊 선거 운동 누적 활동 분석")
+    all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
+    all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
+    if not all_map_df.empty:
+        m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=11)
+        for _, r in all_map_df.iterrows():
+            m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
+            folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)
+        folium_static(m_all)
+
+except Exception as e:
+    st.error(f"오류: {e}")

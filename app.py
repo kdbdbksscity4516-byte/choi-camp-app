@@ -43,33 +43,35 @@ try:
                     with col2:
                         st.subheader(f"{title_val}")
                         st.write(f"📍 {addr_val}")
-                        # 개별 내비는 가장 확실한 검색 연결
+                        # 개별 내비는 가장 안전한 검색 링크 사용
                         st.link_button(f"🚕 내비 연결", f"https://map.kakao.com/link/search/{urllib.parse.quote(addr_val)}", use_container_width=True)
                     st.divider()
             
-            # --- 전체 경로 보기 (카카오맵 자동차 길찾기 공식 방식) ---
+            # --- 전체 경로 보기 (카카오맵 공식 길찾기 파라미터 적용) ---
             if len(addr_list) >= 2:
-                st.subheader("🗺️ 오늘의 전체 동선")
+                # 1. 기본 경로 (출발지/목적지)
+                start_name = urllib.parse.quote(name_list[0])
+                start_addr = urllib.parse.quote(addr_list[0])
+                end_name = urllib.parse.quote(name_list[-1])
+                end_addr = urllib.parse.quote(addr_list[-1])
                 
-                # 출발지와 도착지를 설정하고, 중간 지점들은 경유지로 넣습니다.
-                start_p = urllib.parse.quote(addr_list[0])
-                end_p = urllib.parse.quote(addr_list[-1])
+                # 카카오맵 공식 길찾기 웹 주소 (파라미터 구분 정확히 수정)
+                base_url = f"https://map.kakao.com/link/from/{start_name},{start_addr}/to/{end_name},{end_addr}"
                 
-                # 카카오맵 웹 길찾기 URL (가장 표준적인 형식)
-                # 이 방식은 주소가 2개 이상일 때 선이 그려질 확률이 가장 높습니다.
-                route_url = f"https://map.kakao.com/link/from/{urllib.parse.quote(name_list[0])},{start_p}/to/{urllib.parse.quote(name_list[-1])},{end_p}"
-                
-                # 경유지가 1개 이상일 때만 추가
+                # 2. 경유지가 있다면 ?via= 대신 &via= 를 사용해야 합니다 (이미 /from/to/ 경로가 있으므로)
                 if len(addr_list) > 2:
                     v_points = []
                     for i in range(1, len(addr_list)-1):
                         v_points.append(f"{urllib.parse.quote(name_list[i])},{urllib.parse.quote(addr_list[i])}")
-                    route_url += "?via=" + "|".join(v_points)
+                    # 최종 URL 조립
+                    final_route_url = f"{base_url}?via={'|'.join(v_points)}"
+                else:
+                    final_route_url = base_url
 
-                st.info("💡 아래 버튼을 누르면 전체 경로가 그려진 지도로 연결됩니다.")
-                st.link_button(f"🚩 {selected_date} 전체 동선 선 연결 보기", route_url, use_container_width=True, type="primary")
-                st.caption("※ 카카오맵 앱이 열리면 자동으로 경로가 계산됩니다.")
+                st.success("✅ 전체 동선 지도가 준비되었습니다.")
+                st.link_button(f"🗺️ {selected_date} 전체 경로 선 연결 보기", final_route_url, use_container_width=True, type="primary")
+                st.caption("※ 버튼을 누르면 카카오맵 앱에서 경로가 자동으로 계산됩니다.")
         else:
             st.warning("일정이 없습니다.")
 except Exception as e:
-    st.error("데이터 로딩 중...")
+    st.error(f"데이터 로딩 중 오류: {e}")

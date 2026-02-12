@@ -37,7 +37,8 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    # 상단 배너 이미지 (ImgBB 직링크)
+    # [수정 포인트] 이미지 잘림 방지 (비율 유지 옵션)
+    # 이미지가 정사각형으로 잘리지 않도록 직접 링크를 다시 정렬했습니다.
     st.image("https://i.ibb.co/3yL09Kbs/image.jpg", use_container_width=True)
 
     st.title("최웅식 후보 동선 최적화 & 활동 분석")

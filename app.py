@@ -21,6 +21,13 @@ st.set_page_config(page_title="최웅식 후보 동선 관리", layout="wide")
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
 if 'last_lon' not in st.session_state: st.session_state.last_lon = None
 
+# [신규 추가] 좌표 기반 지역구 판별 함수 (통계용)
+def classify_by_coords(lat, lon):
+    if pd.isna(lat) or pd.isna(lon): return "기타"
+    # 영등포구 을 범위 (여의도 및 신길/대림 남부 대략적 위도 기준)
+    if (lat > 37.517 and lon > 126.910) or (lat < 37.505): return "을"
+    return "갑"
+
 def update_sheet_status(row_idx, status_text):
     api_url = f"{script_url}?row={row_idx}&status={urllib.parse.quote(status_text)}"
     try:
@@ -37,7 +44,6 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    # [수정] 깃발 제거 및 제목 변경
     st.title("최웅식 후보 동선 최적화 & 활동 분석")
 
     # [1] 전체 새로고침 버튼
@@ -66,7 +72,7 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
-        # 리스트 정렬 로직 (시간순 -> 거리순)
+        # 리스트 정렬 로직 (사무장님 원본 버전)
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
@@ -123,11 +129,9 @@ try:
                         update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # [5] 선거 운동 누적 활동 분석 (맨 하단 배치)
+    # [5] 선거 운동 누적 활동 분석 (하단 배치)
     st.divider()
     st.subheader("📊 선거 운동 누적 활동 분석")
-    st.caption("참석(파랑)과 불참석(빨강) 데이터의 지역적 분포입니다. (미체크 항목 제외)")
-    
     all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
     all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
     
@@ -135,14 +139,31 @@ try:
         m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=11)
         for _, r in all_map_df.iterrows():
             m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
-            folium.Marker(
-                [r['위도'], r['경도']], 
-                popup=f"{r['날짜']} | {r['행사명']}", 
-                icon=folium.Icon(color=m_color, icon=m_icon)
-            ).add_to(m_all)
+            folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)
         folium_static(m_all)
-    else:
-        st.write("누적 데이터가 없습니다.")
+
+    # [6] 🆕 좌표 기반 지역구별 참석 현황 (순번 없이 깔끔하게)
+    st.markdown("---")
+    st.subheader("📈 실시간 좌표 기반 참석 통계")
+    attended_df = df[df['참석여부'].str.strip() == '참석'].copy()
+    if not attended_df.empty:
+        # 좌표로 지역구 자동 분류
+        attended_df['지역구_auto'] = attended_df.apply(lambda x: classify_by_coords(x['위도'], x['경도']), axis=1)
+        
+        st.markdown("#### [영등포구]")
+        summary = pd.DataFrame({
+            "갑 참석 합계": [len(attended_df[attended_df['지역구_auto'] == "갑"])],
+            "을 참석 합계": [len(attended_df[attended_df['지역구_auto'] == "을"])]
+        })
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### [영등포구 갑]")
+            st.dataframe(attended_df[attended_df['지역구_auto'] == "갑"][['날짜', '행사명']], use_container_width=True, hide_index=True)
+        with col2:
+            st.markdown("#### [영등포구 을]")
+            st.dataframe(attended_df[attended_df['지역구_auto'] == "을"][['날짜', '행사명']], use_container_width=True, hide_index=True)
 
 except Exception as e:
     st.error(f"오류: {e}")

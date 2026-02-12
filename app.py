@@ -62,6 +62,7 @@ try:
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
+    # [1] 당일 동선 섹션
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
     default_idx = available_dates.index(today_str) if today_str in available_dates else 0
@@ -73,24 +74,14 @@ try:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # --- [핵심 수정: 상단 기준 거리 정렬 로직] ---
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
-        
-        # 이전 그룹의 '가장 첫 번째(상단)' 위치를 추적
         prev_group_anchor = None
         
         for t in times:
             group = day_df[day_df['temp_time_dt'] == t].copy()
-            
-            # 기준점 선정: 1순위(마지막 클릭 위치), 2순위(직전 그룹의 최상단 위치)
-            anchor = None
-            if st.session_state.last_lat:
-                anchor = (st.session_state.last_lat, st.session_state.last_lon)
-            elif prev_group_anchor:
-                anchor = prev_group_anchor
+            anchor = (st.session_state.last_lat, st.session_state.last_lon) if st.session_state.last_lat else prev_group_anchor
 
-            # 정렬 실행
             if anchor:
                 group['dist'] = group.apply(lambda r: geodesic(anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
                 group['status_rank'] = group['참석여부'].map({'참석': 0, '미체크': 1, '불참석': 2})
@@ -99,16 +90,12 @@ try:
                 group = group.sort_values('참석여부')
 
             final_list.append(group)
-            
-            # [수정] 현재 그룹의 '가장 상단(첫 번째)' 위치를 다음 그룹의 기준점으로 전파
             if not group.empty:
-                first_row = group.iloc[0] # 가장 위에 있는 놈
-                if not pd.isna(first_row['위도']):
-                    prev_group_anchor = (first_row['위도'], first_row['경도'])
+                first_row = group.iloc[0]
+                if not pd.isna(first_row['위도']): prev_group_anchor = (first_row['위도'], first_row['경도'])
 
         display_df = pd.concat(final_list)
 
-        # [지도 및 리스트 표시 부분 기존 시인성 강화 코드 유지]
         st.subheader(f"📍 {selected_date} 상세 이동 경로")
         map_df_today = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
         if not map_df_today.empty:
@@ -130,22 +117,19 @@ try:
                 if status == "미체크":
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
-                        update_sheet_status(orig_idx, "참석")
-                        st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
+                        update_sheet_status(orig_idx, "참석"); st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
                         time.sleep(1); st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
                         update_sheet_status(orig_idx, "불참석"); time.sleep(1); st.rerun()
                 elif status == "참석":
                     st.success("✅ 참석 완료")
-                    if st.button("🔄 상태 취소/변경", key=f"re_{orig_idx}"):
-                        update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                    if st.button("🔄 상태 취소", key=f"re_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 elif status == "불참석":
                     st.error("❌ 불참석 처리됨")
-                    if st.button("🔄 상태 취소/변경", key=f"re_{orig_idx}"):
-                        update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                    if st.button("🔄 상태 취소", key=f"re_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # [하단 분석 섹션 - 누적 지도 및 순번 없는 표]
+    # [2] 하단 분석 섹션
     st.divider()
     st.subheader("📊 선거 운동 누적 활동 분석")
     
@@ -158,11 +142,19 @@ try:
             folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color)).add_to(m_all)
         folium_static(m_all)
 
-    # 분석 표 (순번 제거)
+    # 참석 횟수 표 섹션
     attended_df = df[df['참석여부'] == '참석'].copy()
     if not attended_df.empty:
         attended_df[['지역구', '분류동']] = attended_df.apply(lambda x: pd.Series(get_dong_group(x['주소'])), axis=1)
-        st.table(pd.DataFrame({"갑 참석 합계": [len(attended_df[attended_df['지역구'] == "갑"])], "을 참석 합계": [len(attended_df[attended_df['지역구'] == "을"])]}))
+        
+        # [수정] 상단 요약 표 타이틀 및 순번 제거
+        st.markdown("#### [영등포구]")
+        sum_data = pd.DataFrame({
+            "갑 참석 합계": [len(attended_df[attended_df['지역구'] == "갑"])], 
+            "을 참석 합계": [len(attended_df[attended_df['지역구'] == "을"])]
+        })
+        st.dataframe(sum_data, use_container_width=True, hide_index=True)
+
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### [영등포구 갑]")

@@ -72,4 +72,33 @@ try:
         st.divider()
 
         # 선택한 날짜 필터링
-        filtered_
+        filtered_df = df[df['날짜_dt'] == selected_date]
+
+        if not filtered_df.empty:
+            for _, row in filtered_df.iterrows():
+                orig_idx = row['index'] 
+                with st.container(border=True):
+                    st.markdown(f"### ⏱️ {row['시간']} | {row['행사명'] if row['행사명'] != '' else '일정'}")
+                    st.caption(f"📍 {row['주소']}")
+                    
+                    current_status = str(row.get('참석여부', '')).strip()
+                    if current_status not in ["참석", "불참석"]: current_status = "미체크"
+
+                    if current_status == "미체크":
+                        if st.button("🟢 참석", key=f"at_{orig_idx}"):
+                            if update_sheet_status(orig_idx, "참석"): st.rerun()
+                        if st.button("🔴 불참석", key=f"no_{orig_idx}"):
+                            if update_sheet_status(orig_idx, "불참석"): st.rerun()
+                    else:
+                        if current_status == "참석": st.success(f"✅ 선택됨: {current_status}")
+                        else: st.error(f"✅ 선택됨: {current_status}")
+                        
+                        if st.button("🔄 수정하기", key=f"ed_{orig_idx}"):
+                            if update_sheet_status(orig_idx, "미체크"): st.rerun()
+
+                    st.link_button("🚕 카카오내비 실행", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
+        else:
+            st.warning("선택한 날짜에 일정이 없습니다.")
+
+except Exception as e:
+    st.error(f"오류 발생: {e}")

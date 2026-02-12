@@ -16,7 +16,6 @@ script_url = "https://script.google.com/macros/s/AKfycbzlPtAOqvz0wSgbspGz9PbZuDc
 KST = timezone(timedelta(hours=9))
 now_kst = datetime.now(KST)
 
-# [수정 완료] 주소 끝에 ?v=2를 붙여 아이폰 사파리가 새 이미지로 인식하게 강제함
 st.set_page_config(
     page_title="최웅식 후보 동선 관리", 
     layout="wide",
@@ -34,7 +33,6 @@ def update_sheet_status(row_idx, status_text):
     except: return False
 
 try:
-    # 데이터 로드
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
@@ -42,7 +40,6 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    # [배너 이미지]
     raw_img_url = "https://github.com/kdbdbksscity4516-byte/choi-camp-app/raw/main/banner.png"
     st.image(raw_img_url, use_container_width=True)
 
@@ -100,7 +97,9 @@ try:
                 folium.Marker([r['위도'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_today)
                 if r['참석여부'] != '불참석': line_pts.append([r['위도'], r['경도']])
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
-            folium_static(m_today)
+            
+            # [수정 포인트] 지도의 세로 높이를 350으로 줄여 리스트가 빨리 보이게 함
+            folium_static(m_today, width=None, height=350)
 
         st.subheader("📝 오늘 주요 일정 리스트")
         for _, row in display_df.iterrows():
@@ -133,7 +132,9 @@ try:
         for _, r in all_map_df.iterrows():
             m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
             folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)
-        folium_static(m_all)
+        
+        # 누적 분석 지도는 높이를 더 작게(250) 설정해서 공간을 아낍니다.
+        folium_static(m_all, width=None, height=250)
 
 except Exception as e:
     st.error(f"오류: {e}")

@@ -37,8 +37,9 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    # [수정 완료] 깃허브 원본 이미지 주소 적용 (잘림 방지 설정)
-    raw_img_url = "https://raw.githubusercontent.com/kdbdbksscity4516-byte/choi-camp-app/main/%EC%A0%9C%EB%AA%A9%EC%9D%84%20%EC%9E%85%EB%A0%A5%ED%95%B4%EC%A3%BC%20%EC%84%B8%EC%9A%94.%20(2).png"
+    # [중요] GitHub Raw 주소로 변경하여 이미지 호출
+    # 주소 중간에 'blob' 대신 'raw'가 들어가야 앱에서 그림을 제대로 그릴 수 있습니다.
+    raw_img_url = "https://github.com/kdbdbksscity4516-byte/choi-camp-app/raw/main/banner.png"
     st.image(raw_img_url, use_container_width=True)
 
     st.title("최웅식 후보 동선 최적화 & 활동 분석")
@@ -94,7 +95,7 @@ try:
             line_pts = []
             for _, r in map_df_today.iterrows():
                 m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('gray', 'time') if r['참석여부'] == '미체크' else ('red', 'remove')
-                folium.Marker([r['위도'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_today)
+                folium.Marker([r['위0'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_today)
                 if r['참석여부'] != '불참석': line_pts.append([r['위도'], r['경도']])
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today)

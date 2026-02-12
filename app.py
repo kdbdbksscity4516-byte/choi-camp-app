@@ -14,31 +14,35 @@ try:
     # 1. 데이터 가져오기 및 전처리
     df = pd.read_csv(sheet_url)
     if not df.empty:
+        # 날짜 형식 변환 및 정렬
         df['날짜'] = pd.to_datetime(df['날짜']).dt.date
         df['정렬용시간'] = pd.to_datetime(df['시간'], errors='coerce').dt.time
         df = df.sort_values(by=['날짜', '정렬용시간'])
 
-        # --- 사이드바: 날짜 선택 달력 ---
-        st.sidebar.header("🗓️ 날짜 선택")
-        # 시트에 있는 날짜들 중 오늘과 가장 가까운 날짜를 기본값으로 설정
+        # 2. 날짜 선택 영역 (화면 상단에 배치)
         available_dates = sorted(df['날짜'].unique())
+        
+        # 오늘 날짜를 기본값으로, 없으면 첫 번째 날짜 선택
         today = datetime.now().date()
-        
-        default_date = today if today in available_dates else available_dates[0]
-        
-        selected_date = st.sidebar.date_input(
-            "조회할 날짜를 선택하세요",
-            value=default_date,
-            min_value=min(available_dates),
-            max_value=max(available_dates)
+        default_idx = 0
+        if today in available_dates:
+            default_idx = list(available_dates).index(today)
+
+        # 화면 상단에 가로로 날짜 선택 버튼 배치
+        st.write("📅 **조회할 날짜를 선택하세요**")
+        selected_date = st.selectbox(
+            "날짜 선택", 
+            available_dates, 
+            index=default_idx,
+            format_func=lambda x: x.strftime('%m월 %d일 (%a)'),
+            label_visibility="collapsed" # 라벨 숨김으로 깔끔하게
         )
 
-        # 2. 선택한 날짜로 데이터 필터링
-        filtered_df = df[df['날짜'] == selected_date]
+        st.markdown(f"### 📍 {selected_date.strftime('%m월 %d일')} 일정")
+        st.divider()
 
-        # --- 화면 표시 ---
-        st.header(f"📅 {selected_date.strftime('%Y년 %m월 %d일')} 일정")
-        st.markdown("---")
+        # 3. 선택한 날짜로 필터링하여 일정 표시
+        filtered_df = df[df['날짜'] == selected_date]
 
         if not filtered_df.empty:
             for idx, row in filtered_df.iterrows():
@@ -57,6 +61,7 @@ try:
                         
                         if addr_val and addr_val != 'nan':
                             encoded_addr = urllib.parse.quote(addr_val)
+                            # 주소 검색창으로 바로 연결되는 방식 (성공률 제일 높음)
                             kakao_search_url = f"https://map.kakao.com/link/search/{encoded_addr}"
                             st.link_button(f"🚕 내비 연결", kakao_search_url, use_container_width=True)
                     
@@ -64,12 +69,12 @@ try:
                         st.info(f"💡 메모: {note_val}")
                     st.divider()
             
-            # 해당 날짜의 전체 경로 보기
+            # 하단 전체 경로 보기
             addresses = [str(a) for a in filtered_df['주소'].tolist() if pd.notna(a) and str(a).strip() != 'nan']
             if addresses:
                 path = "/".join(addresses)
                 map_url = f"https://www.google.com/maps/dir/{path}"
-                st.link_button(f"🗺️ {selected_date} 전체 경로 보기", map_url, use_container_width=True)
+                st.link_button("🗺️ 오늘 전체 경로 한눈에 확인", map_url, use_container_width=True)
         else:
             st.warning("선택하신 날짜에는 등록된 일정이 없습니다.")
             

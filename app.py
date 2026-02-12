@@ -16,11 +16,11 @@ script_url = "https://script.google.com/macros/s/AKfycbzlPtAOqvz0wSgbspGz9PbZuDc
 KST = timezone(timedelta(hours=9))
 now_kst = datetime.now(KST)
 
-# [수정 완료] 앱 아이콘(Favicon)을 새로 만드신 icon.png로 설정
+# [수정 완료] 주소 끝에 ?v=2를 붙여 아이폰 사파리가 새 이미지로 인식하게 강제함
 st.set_page_config(
     page_title="최웅식 후보 동선 관리", 
     layout="wide",
-    page_icon="https://github.com/kdbdbksscity4516-byte/choi-camp-app/raw/main/icon.png"
+    page_icon="https://github.com/kdbdbksscity4516-byte/choi-camp-app/raw/main/icon.png?v=2"
 )
 
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
@@ -42,7 +42,7 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    # [배너 이미지] 깃허브 Raw 주소
+    # [배너 이미지]
     raw_img_url = "https://github.com/kdbdbksscity4516-byte/choi-camp-app/raw/main/banner.png"
     st.image(raw_img_url, use_container_width=True)
 

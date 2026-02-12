@@ -16,17 +16,28 @@ now_kst = datetime.now(KST)
 
 st.set_page_config(page_title="최웅식 캠프 실시간 보고", layout="centered")
 
-# --- 좌표 변환 함수 (성능 개선 및 오류 로그 추가) ---
-@st.cache_data(ttl=600) # 10분만 기억
-def get_coords_final(address):
-    if not address or len(str(address)) < 5: return None
+# --- 주소 인식 강화 함수 ---
+@st.cache_data(ttl=3600)
+def get_coords_v9(address):
+    if not address: return None
+    # 검색어 정제: '서울시' -> '서울특별시' 등으로 보정 시도
+    clean_addr = str(address).replace("서울시", "서울특별시").strip()
+    
     try:
-        # Nominatim 서비스는 한국 주소 인식이 불안정할 수 있어 여러 번 시도
-        geolocator = Nominatim(user_agent="choi_camp_v8")
-        location = geolocator.geocode(address, timeout=10)
-        if location:
-            return (location.latitude, location.longitude)
-    except Exception as e:
+        # User-Agent를 매번 다르게 해서 차단 회피
+        ua = f"camp_app_{int(time.time())}"
+        geolocator = Nominatim(user_agent=ua)
+        
+        # 1차 시도
+        location = geolocator.geocode(clean_addr, timeout=10)
+        if location: return (location.latitude, location.longitude)
+        
+        # 2차 시도 (주소를 뒤에서부터 조금씩 잘라서 검색 - 예: '당산로 123'만 검색)
+        short_addr = " ".join(clean_addr.split()[-2:])
+        location = geolocator.geocode(short_addr, timeout=10)
+        if location: return (location.latitude, location.longitude)
+        
+    except:
         return None
     return None
 
@@ -54,7 +65,7 @@ try:
     default_idx = list(available_dates).index(today_val) if today_val in available_dates else 0
     selected_date = st.selectbox("🗓️ 날짜 선택", available_dates, index=default_idx)
     
-    if st.button("🔄 거리 다시 계산하기 (새로고침)"):
+    if st.button("🔄 전체 데이터 및 동선 다시 읽기"):
         st.cache_data.clear()
         st.rerun()
     st.divider()
@@ -62,75 +73,53 @@ try:
     day_df = df[df['날짜_dt'] == selected_date].copy().reset_index()
     
     if not day_df.empty:
-        # --- [거리 정렬 핵심 엔진] ---
-        # 1. 기준점 잡기 (마지막 참석 혹은 첫 일정)
+        # 1. 기준 좌표 찾기
         attended = day_df[day_df['참석여부'] == '참석'].sort_values('temp_time')
         base_coords = None
-        base_name = ""
-
+        
         if not attended.empty:
-            last_target = attended.iloc[-1]
-            base_coords = get_coords_final(last_target['주소'])
-            base_name = last_target['행사명']
+            base_coords = get_coords_v9(attended.iloc[-1]['주소'])
+            st.info(f"📍 기준: {attended.iloc[-1]['행사명']} (참석지)")
         else:
-            first_target = day_df.sort_values('temp_time').iloc[0]
-            base_coords = get_coords_final(first_target['주소'])
-            base_name = first_target['행사명']
+            first_event = day_df.sort_values('temp_time').iloc[0]
+            base_coords = get_coords_v9(first_event['주소'])
+            st.info(f"📍 기준: {first_event['행사명']} (첫 일정)")
 
-        # 기준점이 좌표를 못 찾으면 경고 띄우기
-        if not base_coords:
-            st.error(f"❌ 기준점 '{base_name}'의 주소를 인식하지 못했습니다. 주소를 더 정확하게 써주세요.")
-        else:
-            st.success(f"📍 기준점 인식 성공: **{base_name}**")
-
-        # 2. 계단식 정렬
+        # 2. 거리 계산 및 정렬
         times = sorted(day_df['temp_time'].unique())
-        final_rows = []
-        last_ref_coords = base_coords
+        final_list = []
+        last_ref = base_coords
 
         for t in times:
             group = day_df[day_df['temp_time'] == t].copy()
+            # 미체크 일정 정렬
+            if not (group['참석여부'].isin(['참석', '불참석'])).any() and last_ref:
+                group['dist'] = group['주소'].apply(lambda x: geodesic(last_ref, get_coords_v9(x)).meters if get_coords_v9(x) else 999999)
+                group = group.sort_values('dist')
             
-            # 이미 처리된 일정(참석/불참석)은 정렬 없이 추가
-            if (group['참석여부'].isin(['참석', '불참석'])).any():
-                final_rows.append(group)
-                # 만약 참석이 있으면 그 다음 정렬을 위해 기준점 업데이트
-                att_row = group[group['참석여부'] == '참석']
-                if not att_row.empty:
-                    new_c = get_coords_final(att_row.iloc[-1]['주소'])
-                    if new_c: last_ref_coords = new_c
-            else:
-                # 미체크 일정은 거리 계산 정렬
-                if last_ref_coords:
-                    def calc_dist(addr):
-                        target = get_coords_final(addr)
-                        if target: return geodesic(last_ref_coords, target).meters
-                        return 99999999 # 주소 못 찾으면 맨 뒤로
-                    
-                    group['dist'] = group['주소'].apply(calc_dist)
-                    group = group.sort_values('dist')
-                
-                final_rows.append(group)
-                # 다음 시간대를 위해 이 시간대 1순위로 기준점 갱신
-                if not group.empty:
-                    new_c = get_coords_final(group.iloc[0]['주소'])
-                    if new_c: last_ref_coords = new_c
+            final_list.append(group)
+            # 기준점 갱신
+            if not group.empty:
+                top_coords = get_coords_v9(group.iloc[0]['주소'])
+                if top_coords: last_ref = top_coords
 
-        display_df = pd.concat(final_rows)
+        display_df = pd.concat(final_list)
 
-        # --- 출력 ---
+        # 3. 출력
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
                 status = str(row.get('참석여부', '')).strip()
                 if status not in ["참석", "불참석"]: status = "미체크"
-                
-                st.markdown(f"### {'✅' if status=='참석' else '❌' if status=='불참석' else '⏱️'} {row['시간']} | {row['행사명']}")
+                st.markdown(f"### {row['시간']} | {row['행사명']}")
                 st.caption(f"📍 {row['주소']}")
                 
-                # 거리 계산이 됐는지 확인용 (사무장님 확인용 숨김 캡션)
-                if 'dist' in row and row['dist'] < 99999999:
-                    st.caption(f"📏 예상 거리: {round(row['dist']/1000, 1)}km")
+                # 정렬 작동 여부 확인용 (실제 거리 표시)
+                coords = get_coords_v9(row['주소'])
+                if coords:
+                    st.caption(f"✅ 위치 인식됨")
+                else:
+                    st.caption(f"⚠️ 위치 인식 안 됨 (주소를 다시 확인해 주세요)")
 
                 if status == "미체크":
                     c1, c2 = st.columns(2)
@@ -144,7 +133,9 @@ try:
                     st.success(f"결과: {status}")
                     if st.button("🔄 수정", key=f"ed_{orig_idx}"):
                         if update_sheet_status(orig_idx, "미체크"): st.rerun()
-
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
+    else:
+        st.warning("데이터가 없습니다.")
+
 except Exception as e:
     st.error(f"오류: {e}")

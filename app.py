@@ -28,22 +28,23 @@ def update_sheet_status(row_idx, status_text):
     return False
 
 try:
-    # 2. 데이터 강제 로드 및 전처리
+    # 데이터 강제 로드
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
+    
     df['위도'] = pd.to_numeric(df['위도'], errors='coerce')
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
     
-    st.title("🚩 최웅식 후보자님 동선 (최적화 모드)")
+    st.title("🚩 최웅식 후보자님 스케줄")
 
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
     default_idx = available_dates.index(today_str) if today_str in available_dates else 0
     selected_date = st.selectbox("🗓️ 날짜 선택", available_dates, index=default_idx)
     
-    if st.button("🔄 데이터 강제 새로고침"):
+    if st.button("🔄 일정 새로고침"):
         st.cache_data.clear()
         st.rerun()
     st.divider()
@@ -51,49 +52,51 @@ try:
     day_df = df[df['날짜_str'] == selected_date].copy().reset_index()
     
     if not day_df.empty:
-        # 시간 및 참석시간 변환
+        day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # --- [새로운 핵심 정렬 로직] ---
-        # 1. 참석 완료 그룹 (누른 순서대로 상단 고정)
-        attended_df = day_df[day_df['참석여부'] == '참석'].sort_values('참석시간_dt', ascending=True)
-        
-        # 2. 기준점(앵커) 찾기: 가장 최근에 '참석'을 누른 곳의 위치
-        anchor_coords = None
-        if not attended_df.empty:
-            latest_attended = attended_df.iloc[-1]
-            if not pd.isna(latest_attended['위도']):
-                anchor_coords = (latest_attended['위도'], latest_attended['경도'])
-        
-        # 3. 미체크 그룹 처리
-        pending_df = day_df[day_df['참석여부'] == '미체크'].copy()
-        if not pending_df.empty:
-            if anchor_coords:
-                # 앵커가 있으면 모든 미체크 일정을 '앵커'와의 거리순으로 계산
-                pending_df['dist'] = pending_df.apply(
-                    lambda r: geodesic(anchor_coords, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 9999999, axis=1
-                )
-                pending_df = pending_df.sort_values('dist')
-            else:
-                # 앵커가 없으면(오늘 첫 시작) 시간순 정렬
-                pending_df = pending_df.sort_values('시간')
+        # 1. 오늘 전체에서 가장 최근 '참석' 누른 위치 찾기 (기준점)
+        attended_all = day_df[day_df['참석여부'] == '참석'].sort_values('참석시간_dt', ascending=False)
+        last_coords = None
+        if not attended_all.empty:
+            row = attended_all.iloc[0]
+            if not pd.isna(row['위도']): last_coords = (row['위도'], row['경도'])
 
-        # 4. 불참석 그룹 (맨 아래)
-        no_df = day_df[day_df['참석여부'] == '불참석']
-        
-        # 5. 최종 리스트 합치기: [참석완료] -> [가장 가까운 미체크들] -> [불참석]
-        display_df = pd.concat([attended_df, pending_df, no_df])
+        # 2. 시간대별 그룹핑 (시간 순서 보장)
+        times = sorted(day_df['temp_time_dt'].dropna().unique())
+        final_list = []
 
-        # --- 지도 및 리스트 출력 ---
-        st.subheader("📍 실시간 최적화 동선")
+        for t in times:
+            group = day_df[day_df['temp_time_dt'] == t].copy()
+            
+            # (A) 이 시간대 참석 완료: 누른 시간 순서대로 (맨 위)
+            group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
+            
+            # (B) 이 시간대 미체크: 마지막 참석 위치(전주 등)에서 가까운 순
+            group_pending = group[group['참석여부'] == '미체크'].copy()
+            if not group_pending.empty:
+                if last_coords:
+                    group_pending['dist'] = group_pending.apply(
+                        lambda r: geodesic(last_coords, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 9999999, axis=1
+                    )
+                    group_pending = group_pending.sort_values('dist')
+            
+            group_no = group[group['참석여부'] == '불참석']
+            
+            # 시간대 내부에서만 정렬하여 합침
+            final_list.append(pd.concat([group_att, group_pending, group_no]))
+
+        display_df = pd.concat(final_list)
+
+        # 지도 및 리스트 출력
+        st.subheader("📍 현재 위치 기반 동선")
         m_df = display_df[display_df['참석여부'] != '불참석']
         m_df = m_df[m_df['위도'].notna() & m_df['경도'].notna()]
         if not m_df.empty:
             m = folium.Map(location=[m_df.iloc[0]['위도'], m_df.iloc[0]['경도']], zoom_start=11)
             pts = [[r['위도'], r['경도']] for _, r in m_df.iterrows()]
             for _, r in m_df.iterrows():
-                icon_color = 'blue' if r['참석여부'] == '참석' else 'red'
-                folium.Marker([r['위도'], r['경도']], popup=r['행사명'], icon=folium.Icon(color=icon_color)).add_to(m)
+                folium.Marker([r['위도'], r['경도']], popup=r['행사명'], icon=folium.Icon(color='blue' if r['참석여부']=='참석' else 'red')).add_to(m)
             if len(pts) > 1: folium.PolyLine(pts, color="red", weight=3).add_to(m)
             folium_static(m)
 
@@ -107,19 +110,16 @@ try:
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
                         if update_sheet_status(orig_idx, "참석"):
-                            st.cache_data.clear()
                             time.sleep(1)
                             st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
                         if update_sheet_status(orig_idx, "불참석"):
-                            st.cache_data.clear()
                             time.sleep(1)
                             st.rerun()
                 else:
                     st.success(f"결과: {status}")
                     if st.button("🔄 재선택", key=f"re_{orig_idx}"):
                         if update_sheet_status(orig_idx, "미체크"):
-                            st.cache_data.clear()
                             time.sleep(1)
                             st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")

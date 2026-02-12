@@ -39,11 +39,10 @@ try:
 
     st.title("🚩 최웅식 후보자님 실시간 동선")
 
-    # --- [사무장님 요청: 새로고침 버튼 추가 구역] ---
+    # 상단 새로고침 버튼
     if st.button("🔄 데이터 새로고침"):
         st.cache_data.clear()
         st.rerun()
-    # ------------------------------------------
 
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
@@ -56,6 +55,7 @@ try:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
+        # [기준점 설정]
         current_anchor = None
         if st.session_state.last_lat:
             current_anchor = (st.session_state.last_lat, st.session_state.last_lon)
@@ -65,27 +65,36 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
+        # 시간대별 정렬
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
             group = day_df[day_df['temp_time_dt'] == t].copy()
+            
             group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
             group_pending = group[group['참석여부'] == '미체크'].copy()
             if not group_pending.empty and current_anchor:
                 group_pending['dist'] = group_pending.apply(lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
                 group_pending = group_pending.sort_values('dist')
+            
+            # [수정] 불참석 항목도 그룹 내 포함하여 정렬 (참석 -> 미체크 -> 불참석 순)
             group_no = group[group['참석여부'] == '불참석']
             final_list.append(pd.concat([group_att, group_pending, group_no]))
 
         display_df = pd.concat(final_list)
 
+        # 3. 지도 출력 (불참석은 지도에 표시하지 않음)
         st.subheader("📍 실시간 동선 지도")
-        m_df = display_df[display_df['참석여부'] != '불참석']
-        m_df = m_df[m_df['위도'].notna() & m_df['경도'].notna()]
-        if not m_df.empty:
-            m = folium.Map(location=[m_df.iloc[0]['위도'], m_df.iloc[0]['경도']], zoom_start=11)
+        m_df = display_df[display_df['참석여부'] == '참석'] # 지도는 실제 가는 곳만
+        m_pending_df = display_df[display_df['참석여부'] == '미체크']
+        
+        map_draw_df = pd.concat([m_df, m_pending_df])
+        map_draw_df = map_draw_df[map_draw_df['위도'].notna() & map_draw_df['경도'].notna()]
+        
+        if not map_draw_df.empty:
+            m = folium.Map(location=[map_draw_df.iloc[0]['위도'], map_draw_df.iloc[0]['경도']], zoom_start=11)
             pts = []
-            for _, r in m_df.iterrows():
+            for _, r in map_draw_df.iterrows():
                 icon_color = 'blue' if r['참석여부'] == '참석' else 'red'
                 folium.Marker([r['위도'], r['경도']], popup=r['행사명'], icon=folium.Icon(color=icon_color)).add_to(m)
                 pts.append([r['위도'], r['경도']])
@@ -93,13 +102,15 @@ try:
                 folium.PolyLine(pts, color="red", weight=3, opacity=0.8).add_to(m)
             folium_static(m)
 
+        # 4. 일정 리스트 출력 (불참석도 리스트에 유지)
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
                 st.markdown(f"### {row['시간']} | {row['행사명']}")
                 st.caption(f"📍 {row['주소']}")
+                status = str(row['참석여부']).strip()
                 
-                if row['참석여부'] == "미체크":
+                if status == "미체크":
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
                         update_sheet_status(orig_idx, "참석")
@@ -108,12 +119,21 @@ try:
                         time.sleep(1) 
                         st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
-                        update_sheet_status(orig_idx, "불불참석")
+                        update_sheet_status(orig_idx, "불참석")
+                        time.sleep(1)
                         st.rerun()
-                else:
-                    st.success(f"결과: {row['참석여부']}")
+                elif status == "불참석":
+                    # [핵심] 불참석 상태일 때 취소선 느낌의 경고와 함께 재선택 버튼 제공
+                    st.error(f"결과: {status}")
+                    if st.button("🔄 재선택 (복구)", key=f"re_{orig_idx}"):
+                        update_sheet_status(orig_idx, "미체크")
+                        time.sleep(1)
+                        st.rerun()
+                else: # '참석' 상태
+                    st.success(f"결과: {status}")
                     if st.button("🔄 재선택", key=f"re_{orig_idx}"):
                         update_sheet_status(orig_idx, "미체크")
+                        time.sleep(1)
                         st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 

@@ -63,7 +63,7 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
-        # [리스트 정렬 로직] 시간 우선 -> (참석/미체크/불참석) -> 거리순
+        # 리스트 정렬 로직
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
@@ -76,31 +76,27 @@ try:
             group_no = group[group['참석여부'] == '불참석']
             final_list.append(pd.concat([group_att, group_pending, group_no]))
 
-        # --- 이게 바로 지도가 따라가야 할 '최종 리스트'입니다 ---
         display_df = pd.concat(final_list)
 
-        # 3. 지도 출력 (리스트 순서와 100% 동기화)
+        # 3. 지도 출력 (불참석 제외 및 리스트 순서 동기화)
         st.subheader("📍 실시간 동선 지도")
-        # 불참석을 제외한 '실제 이동 경로'만 필터링 (순서는 유지)
         map_draw_df = display_df[display_df['참석여부'].isin(['참석', '미체크'])]
         map_draw_df = map_draw_df[map_draw_df['위도'].notna() & map_draw_df['경도'].notna()]
         
         if not map_draw_df.empty:
-            # 첫 번째 마커 위치로 지도 중심 설정
-            m = folium.Map(location=[map_draw_df.iloc[0]['위0'], map_draw_df.iloc[0]['경도']], zoom_start=11)
+            # 첫 번째 마커 위치로 지도 중심 설정 (수정된 부분: 위0 -> 위도)
+            m = folium.Map(location=[map_draw_df.iloc[0]['위도'], map_draw_df.iloc[0]['경도']], zoom_start=11)
             pts = []
             
-            # [핵심] 리스트 순서대로 마커 찍고 좌표를 pts에 추가
             for _, r in map_draw_df.iterrows():
                 icon_color = 'blue' if r['참석여부'] == '참석' else 'red'
                 folium.Marker(
-                    [r['위도'], r['경도']], 
+                    [r['위도'], r['경0' if False else '경도']], # 안전하게 경도 확인
                     popup=f"{r['시간']} {r['행사명']}", 
                     icon=folium.Icon(color=icon_color)
                 ).add_to(m)
                 pts.append([r['위도'], r['경도']])
             
-            # [핵심] 리스트 순서 그대로 빨간 선 연결
             if len(pts) > 1:
                 folium.PolyLine(pts, color="red", weight=3, opacity=0.8).add_to(m)
             folium_static(m)

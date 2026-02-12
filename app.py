@@ -19,58 +19,54 @@ try:
         today = datetime.now().date()
         default_idx = list(available_dates).index(today) if today in available_dates else 0
 
-        st.write("📅 **조회할 날짜를 선택하세요**")
-        selected_date = st.selectbox("날짜 선택", available_dates, index=default_idx,
-                                     format_func=lambda x: x.strftime('%m월 %d일 (%a)'),
-                                     label_visibility="collapsed")
-
-        st.markdown(f"### 📍 {selected_date.strftime('%m월 %d일')} 일정")
+        selected_date = st.selectbox("📅 날짜 선택", available_dates, index=default_idx,
+                                     format_func=lambda x: x.strftime('%m월 %d일 (%a)'))
         st.divider()
 
         filtered_df = df[df['날짜'] == selected_date]
 
         if not filtered_df.empty:
-            addr_list = [] # 경로 생성을 위한 주소 리스트
+            # 경로 생성을 위해 (장소명, 주소) 쌍을 리스트로 저장
+            route_points = []
             
             for idx, row in filtered_df.iterrows():
-                with st.container():
-                    time_val = row.get('시간', '00:00')
-                    title_val = row.get('행사명', '미정')
-                    addr_val = str(row.get('주소', '')).strip()
-                    
-                    if addr_val and addr_val != 'nan':
-                        addr_list.append(addr_val) # 주소 저장
+                time_val = row.get('시간', '00:00')
+                title_val = str(row.get('행사명', '장소')).strip()
+                addr_val = str(row.get('주소', '')).strip()
+                
+                if addr_val and addr_val != 'nan':
+                    route_points.append((title_val, addr_val))
 
+                with st.container():
                     col1, col2 = st.columns([1, 4])
                     col1.metric("시간", str(time_val))
-                    
                     with col2:
                         st.subheader(f"{title_val}")
                         st.write(f"📍 {addr_val}")
-                        
-                        if addr_val and addr_val != 'nan':
-                            encoded_addr = urllib.parse.quote(addr_val)
-                            kakao_search_url = f"https://map.kakao.com/link/search/{encoded_addr}"
-                            st.link_button(f"🚕 내비 연결", kakao_search_url, use_container_width=True)
+                        # 개별 내비는 검색창으로 연결 (가장 확실함)
+                        st.link_button(f"🚕 내비 연결", f"https://map.kakao.com/link/search/{urllib.parse.quote(addr_val)}", use_container_width=True)
                     st.divider()
             
-            # --- 수정된 전체 경로 보기 로직 (카카오맵 경유지 활용) ---
-            if len(addr_list) >= 2:
-                # 시작점, 경유지들, 도착점을 구분해서 링크 생성
-                start_addr = urllib.parse.quote(addr_list[0])
-                dest_addr = urllib.parse.quote(addr_list[-1])
-                waypoint_str = ""
-                if len(addr_list) > 2:
-                    # 중간 주소들을 경유지로 추가
-                    waypoints = [urllib.parse.quote(a) for a in addr_list[1:-1]]
-                    waypoint_str = "&via=" + ",".join(waypoints)
+            # --- 경로 자동 생성 로직 수정 ---
+            if len(route_points) >= 2:
+                # 시작점과 도착점 설정
+                s_name, s_addr = route_points[0]
+                e_name, e_addr = route_points[-1]
                 
-                # 카카오맵 자동차 길찾기 공식 링크
-                kakao_route_url = f"https://map.kakao.com/link/from/{start_addr}/to/{dest_addr}{waypoint_str}"
+                # 카카오맵 길찾기 URL (이름과 주소를 함께 전송해야 경로가 바로 뜹니다)
+                # 형식: /from/이름,주소/to/이름,주소
+                kakao_route_url = f"https://map.kakao.com/link/from/{urllib.parse.quote(s_name)},{urllib.parse.quote(s_addr)}/to/{urllib.parse.quote(e_name)},{urllib.parse.quote(e_addr)}"
                 
-                st.info("💡 아래 버튼을 누르면 오늘의 전체 동선이 지도로 그려집니다.")
-                st.link_button(f"🗺️ {selected_date} 전체 동선 확인 (카카오맵)", kakao_route_url, use_container_width=True, type="secondary")
+                # 경유지가 있다면 추가
+                if len(route_points) > 2:
+                    v_list = []
+                    for v_name, v_addr in route_points[1:-1]:
+                        v_list.append(f"{urllib.parse.quote(v_name)},{urllib.parse.quote(v_addr)}")
+                    kakao_route_url += "?via=" + "|".join(v_list)
+                
+                st.success("✅ 오늘의 전체 경로가 준비되었습니다.")
+                st.link_button(f"🗺️ {selected_date} 전체 동선 선 연결 보기", kakao_route_url, use_container_width=True, type="primary")
         else:
-            st.warning("선택하신 날짜에는 등록된 일정이 없습니다.")
+            st.warning("일정이 없습니다.")
 except Exception as e:
     st.error("데이터 로딩 중...")

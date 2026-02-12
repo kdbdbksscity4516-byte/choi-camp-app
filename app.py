@@ -16,6 +16,7 @@ script_url = "https://script.google.com/macros/s/AKfycbzlPtAOqvz0wSgbspGz9PbZuDc
 KST = timezone(timedelta(hours=9))
 now_kst = datetime.now(KST)
 
+# [설정] 페이지 레이아웃 및 타이틀
 st.set_page_config(page_title="최웅식 후보 동선 관리", layout="wide")
 
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
@@ -37,9 +38,9 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    # [수정 포인트] 이미지 잘림 방지 (비율 유지 옵션)
-    # 이미지가 정사각형으로 잘리지 않도록 직접 링크를 다시 정렬했습니다.
-    st.image("https://i.ibb.co/3yL09Kbs/image.jpg", use_container_width=True)
+    # [수정 완료] 구글 드라이브 배너 이미지 주소 및 비율 고정
+    # 1200x300 비율을 유지하도록 설정했습니다.
+    st.image("https://drive.google.com/uc?export=view&id=1T0lLOjhA9OoO-0SXiO7eO1WYeIJ_mgk6", use_container_width=True)
 
     st.title("최웅식 후보 동선 최적화 & 활동 분석")
 
@@ -58,6 +59,7 @@ try:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
+        # [정렬 로직]
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         current_anchor = None
@@ -85,6 +87,7 @@ try:
 
         display_df = pd.concat(final_list)
 
+        # [지도 표시]
         st.subheader(f"📍 {selected_date} 상세 이동 경로")
         map_df_today = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
         if not map_df_today.empty:
@@ -97,6 +100,7 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today)
 
+        # [리스트 표시]
         st.subheader("📝 오늘 주요 일정 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']

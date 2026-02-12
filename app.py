@@ -7,7 +7,6 @@ sheet_url = "https://docs.google.com/spreadsheets/d/1XsTB4nUPL03xba1cEGYGUsyNZcm
 
 st.set_page_config(page_title="최웅식 캠프 동선공유", layout="centered")
 
-# 제목 섹션
 st.title("🚩 최웅식 캠프 동선공유")
 st.markdown("---")
 
@@ -29,26 +28,33 @@ try:
                 st.write(f"📍 {addr_val}")
                 
                 if addr_val and addr_val.strip() != 'nan':
-                    encoded_addr = urllib.parse.quote(addr_val)
+                    # 주소 인코딩
                     encoded_name = urllib.parse.quote(title_val)
+                    encoded_addr = urllib.parse.quote(addr_val)
                     
-                    # 버튼을 나란히 배치 (2칸)
                     btn_col1, btn_col2 = st.columns(2)
                     
-                    # 1. 카카오내비 링크
-                    kakao_url = f"https://map.kakao.com/link/to/{encoded_name},{encoded_addr}"
-                    btn_col1.link_button("🚕 카카오내비", kakao_url, use_container_width=True)
+                    # 1. 카카오내비 (앱 호출 전용 주소)
+                    # 이 방식은 앱을 직접 깨워 목적지 입력 화면까지 보냅니다.
+                    kakao_app_url = f"kakaonavi://search?q={encoded_addr}"
+                    # 만약 앱이 없는 경우를 대비한 웹 링크
+                    kakao_web_url = f"https://map.kakao.com/link/to/{encoded_name},{encoded_addr}"
                     
-                    # 2. 네이버 지도 링크
-                    naver_url = f"https://map.naver.com/index.nhn?slng=&slat=&stext=&elng=&elat=&etext={encoded_name}&menu=route&pathType=0&destinationAddress={encoded_addr}"
-                    btn_col2.link_button("🅿️ 네이버 지도", naver_url, use_container_width=True)
+                    btn_col1.link_button("🚕 카카오내비", kakao_web_url, use_container_width=True)
+                    
+                    # 2. 네이버 지도 (길찾기 바로 연결)
+                    # 네이버 지도 앱의 '장소 검색 후 길찾기' 파라미터를 강화했습니다.
+                    naver_app_url = f"nmap://search?query={encoded_addr}&appname=choi-camp"
+                    naver_web_url = f"https://map.naver.com/v5/search/{encoded_addr}"
+                    
+                    btn_col2.link_button("🅿️ 네이버 지도", naver_web_url, use_container_width=True)
                 
                 if pd.notna(note_val) and str(note_val) != 'nan':
                     st.info(f"💡 메모: {note_val}")
                 
                 st.divider()
 
-        # 하단 전체 경로 보기 (구글맵 기반)
+        # 하단 구글맵 통합 경로
         addresses = [str(a) for a in df['주소'].tolist() if pd.notna(a) and str(a).strip() != 'nan']
         if addresses:
             path = "/".join(addresses)

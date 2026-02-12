@@ -16,7 +16,7 @@ script_url = "https://script.google.com/macros/s/AKfycbzlPtAOqvz0wSgbspGz9PbZuDc
 KST = timezone(timedelta(hours=9))
 now_kst = datetime.now(KST)
 
-st.set_page_config(page_title="최웅식 후보자님 동선 관리", layout="wide")
+st.set_page_config(page_title="최웅식 후보 동선 관리", layout="wide")
 
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
 if 'last_lon' not in st.session_state: st.session_state.last_lon = None
@@ -37,14 +37,15 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    st.title("🚩 최웅식 후보자님 실시간 동선 & 활동 분석")
+    # [수정] 깃발 제거 및 제목 변경
+    st.title("최웅식 후보 동선 최적화 & 활동 분석")
 
-    # [1] 새로고침 버튼
+    # [1] 전체 새로고침 버튼
     if st.button("🔄 전체 새로고침 (F5)"):
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
-    # [2] 날짜 선택 및 데이터 필터링
+    # [2] 날짜 선택
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
     default_idx = available_dates.index(today_str) if today_str in available_dates else 0
@@ -127,7 +128,6 @@ try:
     st.subheader("📊 선거 운동 누적 활동 분석")
     st.caption("참석(파랑)과 불참석(빨강) 데이터의 지역적 분포입니다. (미체크 항목 제외)")
     
-    # 누적 분석에서는 '참석'과 '불참석'만 필터링
     all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
     all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
     

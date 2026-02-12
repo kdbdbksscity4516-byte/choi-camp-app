@@ -17,7 +17,6 @@ now_kst = datetime.now(KST)
 
 st.set_page_config(page_title="최웅식 후보자님 동선", layout="centered")
 
-# [핵심] 마지막 클릭 위치 기억
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
 if 'last_lon' not in st.session_state: st.session_state.last_lon = None
 
@@ -29,7 +28,7 @@ def update_sheet_status(row_idx, status_text):
     except: return False
 
 try:
-    # 2. 데이터 강제 로드
+    # 2. 데이터 로드 (캐시 무력화)
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
@@ -39,7 +38,6 @@ try:
 
     st.title("🚩 최웅식 후보자님 실시간 동선")
 
-    # 상단 새로고침 버튼
     if st.button("🔄 데이터 새로고침"):
         st.cache_data.clear()
         st.rerun()
@@ -55,7 +53,7 @@ try:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # [기준점 설정]
+        # 기준점 설정
         current_anchor = None
         if st.session_state.last_lat:
             current_anchor = (st.session_state.last_lat, st.session_state.last_lon)
@@ -65,44 +63,49 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
-        # 시간대별 정렬
+        # [리스트 정렬 로직] 시간 우선 -> (참석/미체크/불참석) -> 거리순
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
             group = day_df[day_df['temp_time_dt'] == t].copy()
-            
             group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
             group_pending = group[group['참석여부'] == '미체크'].copy()
             if not group_pending.empty and current_anchor:
                 group_pending['dist'] = group_pending.apply(lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
                 group_pending = group_pending.sort_values('dist')
-            
-            # [수정] 불참석 항목도 그룹 내 포함하여 정렬 (참석 -> 미체크 -> 불참석 순)
             group_no = group[group['참석여부'] == '불참석']
             final_list.append(pd.concat([group_att, group_pending, group_no]))
 
+        # --- 이게 바로 지도가 따라가야 할 '최종 리스트'입니다 ---
         display_df = pd.concat(final_list)
 
-        # 3. 지도 출력 (불참석은 지도에 표시하지 않음)
+        # 3. 지도 출력 (리스트 순서와 100% 동기화)
         st.subheader("📍 실시간 동선 지도")
-        m_df = display_df[display_df['참석여부'] == '참석'] # 지도는 실제 가는 곳만
-        m_pending_df = display_df[display_df['참석여부'] == '미체크']
-        
-        map_draw_df = pd.concat([m_df, m_pending_df])
+        # 불참석을 제외한 '실제 이동 경로'만 필터링 (순서는 유지)
+        map_draw_df = display_df[display_df['참석여부'].isin(['참석', '미체크'])]
         map_draw_df = map_draw_df[map_draw_df['위도'].notna() & map_draw_df['경도'].notna()]
         
         if not map_draw_df.empty:
-            m = folium.Map(location=[map_draw_df.iloc[0]['위도'], map_draw_df.iloc[0]['경도']], zoom_start=11)
+            # 첫 번째 마커 위치로 지도 중심 설정
+            m = folium.Map(location=[map_draw_df.iloc[0]['위0'], map_draw_df.iloc[0]['경도']], zoom_start=11)
             pts = []
+            
+            # [핵심] 리스트 순서대로 마커 찍고 좌표를 pts에 추가
             for _, r in map_draw_df.iterrows():
                 icon_color = 'blue' if r['참석여부'] == '참석' else 'red'
-                folium.Marker([r['위도'], r['경도']], popup=r['행사명'], icon=folium.Icon(color=icon_color)).add_to(m)
+                folium.Marker(
+                    [r['위도'], r['경도']], 
+                    popup=f"{r['시간']} {r['행사명']}", 
+                    icon=folium.Icon(color=icon_color)
+                ).add_to(m)
                 pts.append([r['위도'], r['경도']])
+            
+            # [핵심] 리스트 순서 그대로 빨간 선 연결
             if len(pts) > 1:
                 folium.PolyLine(pts, color="red", weight=3, opacity=0.8).add_to(m)
             folium_static(m)
 
-        # 4. 일정 리스트 출력 (불참석도 리스트에 유지)
+        # 4. 일정 리스트 출력
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
@@ -123,13 +126,12 @@ try:
                         time.sleep(1)
                         st.rerun()
                 elif status == "불참석":
-                    # [핵심] 불참석 상태일 때 취소선 느낌의 경고와 함께 재선택 버튼 제공
                     st.error(f"결과: {status}")
                     if st.button("🔄 재선택 (복구)", key=f"re_{orig_idx}"):
                         update_sheet_status(orig_idx, "미체크")
                         time.sleep(1)
                         st.rerun()
-                else: # '참석' 상태
+                else: 
                     st.success(f"결과: {status}")
                     if st.button("🔄 재선택", key=f"re_{orig_idx}"):
                         update_sheet_status(orig_idx, "미체크")

@@ -19,7 +19,7 @@ st.set_page_config(page_title="최웅식 캠프 실시간 보고", layout="cente
 def get_coords_cached(address):
     if not address or len(address) < 5: return None, None
     try:
-        geolocator = Nominatim(user_agent="choi_camp_final_v4")
+        geolocator = Nominatim(user_agent="choi_camp_v6")
         location = geolocator.geocode(address, timeout=10)
         if location: return location.latitude, location.longitude
     except: return None, None
@@ -36,7 +36,7 @@ def update_sheet_status(row_idx, status_text):
     return False
 
 st.markdown("""<style> div.stButton > button { width: 100% !important; height: 50px !important; } </style>""", unsafe_allow_html=True)
-st.title("🚩 캠프 실시간 보고")
+st.title("🚩 캠프 실시간 동선 보고")
 
 try:
     df = pd.read_csv(f"{sheet_url}&t={now_kst.timestamp()}")
@@ -52,72 +52,81 @@ try:
     if st.button("🔄 페이지 새로고침"): st.rerun()
     st.divider()
 
-    day_df = df[df['날짜_dt'] == selected_date].copy().reset_index()
-
-    # --- [참석 완료 장소 기준 동선 정렬] ---
-    # 1. '참석'이라고 표시된 행들만 필터링
-    attended_events = day_df[day_df['참석여부'] == '참석'].sort_values('temp_time')
+    day_df = df[df['날짜_dt'] == selected_date].copy().sort_values('temp_time')
     
-    base_point = None
-    base_name = ""
-
-    if not attended_events.empty:
-        # 가장 최근에 '참석'을 누른 행사장 주소가 기준
-        last_attended = attended_events.iloc[-1]
-        base_point = get_coords_cached(last_attended['주소'])
-        base_name = f"마지막 참석지: {last_attended['행사명']}"
-    elif not day_df.empty:
-        # 아직 아무것도 참석 안 했다면, 오늘의 첫 번째 일정을 기준점으로 설정
-        first_event = day_df.sort_values('temp_time').iloc[0]
-        base_point = get_coords_cached(first_event['주소'])
-        base_name = f"오늘의 시작점: {first_event['행사명']}"
-
-    # 아직 '참석/불참석' 결정 안 된 일정들
-    future_events = day_df[day_df['참석여부'].isin(['', '미체크'])].copy()
-
-    if base_point and base_point[0] and not future_events.empty:
-        st.success(f"📍 기준 위치: **{base_name}**")
+    if not day_df.empty:
+        # --- [참석 기반 계단식 정렬 로직] ---
+        # 1. 마지막으로 '참석'한 행사가 있는지 확인
+        attended_events = day_df[day_df['참석여부'] == '참석'].sort_values('temp_time')
         
-        def get_dist(addr):
-            target = get_coords_cached(addr)
-            return geodesic(base_point, target).meters if target and target[0] else 999999
-        
-        future_events['dist'] = future_events['주소'].apply(get_dist)
-        # 시간순으로 먼저 정렬하고, 같은 시간대면 거리순(dist)으로 정렬
-        sorted_future = future_events.sort_values(by=['temp_time', 'dist'])
-        
-        # 화면에 보여줄 데이터: 이미 처리된 것 + 앞으로 할 것(거리순)
-        processed_events = day_df[~day_df['참석여부'].isin(['', '미체크'])].sort_values('temp_time')
-        display_df = pd.concat([processed_events, sorted_future])
-    else:
-        display_df = day_df.sort_values('temp_time')
+        times = sorted(day_df['temp_time'].unique())
+        final_list = []
+        last_coords = None
+        base_found = False
 
-    # --- 출력 ---
-    for _, row in display_df.iterrows():
-        orig_idx = row['index']
-        with st.container(border=True):
-            status = str(row.get('참석여부', '')).strip()
-            if status not in ["참석", "불참석"]: status = "미체크"
+        # 만약 참석한 행사가 있다면 그곳을 강제 기준점으로 설정
+        if not attended_events.empty:
+            last_attended = attended_events.iloc[-1]
+            last_coords = get_coords_cached(last_attended['주소'])
+            base_found = True
+            st.info(f"📍 실시간 기준: **{last_attended['행사명']}** (참석 위치)")
+
+        for t in times:
+            current_group = day_df[day_df['temp_time'] == t].copy()
             
-            title_tag = "✅" if status == "참석" else "❌" if status == "불참석" else "⏱️"
-            st.markdown(f"### {title_tag} {row['시간']} | {row['행사명']}")
-            st.caption(f"📍 {row['주소']}")
-            
-            if status == "미체크":
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("🟢 참석", key=f"at_{orig_idx}"):
-                        if update_sheet_status(orig_idx, "참석"): st.rerun()
-                with c2:
-                    if st.button("🔴 불참석", key=f"no_{orig_idx}"):
-                        if update_sheet_status(orig_idx, "불참석"): st.rerun()
+            # 이미 처리된(참석/불참석) 그룹은 정렬하지 않고 그대로 유지
+            if (current_group['참석여부'] != '미체크').any() and (current_group['참석여부'] != '').any():
+                final_list.append(current_group.reset_index())
+                # 만약 이 그룹에 마지막 참석지가 있었다면 이후 그룹은 이 좌표를 기준으로 정렬
+                attended_in_group = current_group[current_group['참석여부'] == '참석']
+                if not attended_in_group.empty:
+                    last_coords = get_coords_cached(attended_in_group.iloc[-1]['주소'])
             else:
-                if status == "참석": st.success(f"결과: {status}")
-                else: st.error(f"결과: {status}")
-                if st.button("🔄 수정하기", key=f"ed_{orig_idx}"):
-                    if update_sheet_status(orig_idx, "미체크"): st.rerun()
+                # 미체크 그룹이고 기준점이 있다면 거리순 정렬
+                if last_coords:
+                    def calc_dist(addr):
+                        target = get_coords_cached(addr)
+                        return geodesic(last_coords, target).meters if target and target[0] else 999999
+                    current_group['dist'] = current_group['주소'].apply(calc_dist)
+                    current_group = current_group.sort_values('dist').reset_index()
+                else:
+                    # 기준점 없으면(오늘 첫 시작 전) 시간순 그대로
+                    current_group = current_group.reset_index()
+                
+                final_list.append(current_group)
+                # 다음 시간대를 위해 이 시간대의 1등을 기준점으로 갱신
+                if not current_group.empty:
+                    last_coords = get_coords_cached(current_group.iloc[0]['주소'])
 
-            st.link_button("🚕 카카오내비 실행", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
+        display_df = pd.concat(final_list)
+        
+        # --- 출력 ---
+        for _, row in display_df.iterrows():
+            orig_idx = row['index']
+            with st.container(border=True):
+                status = str(row.get('참석여부', '')).strip()
+                if status not in ["참석", "불참석"]: status = "미체크"
+                
+                title_tag = "✅" if status == "참석" else "❌" if status == "불참석" else "⏱️"
+                st.markdown(f"### {title_tag} {row['시간']} | {row['행사명']}")
+                st.caption(f"📍 {row['주소']}")
+                
+                if status == "미체크":
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("🟢 참석", key=f"at_{orig_idx}"):
+                            if update_sheet_status(orig_idx, "참석"): st.rerun()
+                    with c2:
+                        if st.button("🔴 불참석", key=f"no_{orig_idx}"):
+                            if update_sheet_status(orig_idx, "불참석"): st.rerun()
+                else:
+                    st.success(f"결과: {status}")
+                    if st.button("🔄 수정", key=f"ed_{orig_idx}"):
+                        if update_sheet_status(orig_idx, "미체크"): st.rerun()
+
+                st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
+    else:
+        st.warning("일정이 없습니다.")
 
 except Exception as e:
-    st.error(f"데이터 정렬 중... {e}")
+    st.error(f"정렬 오류: {e}")

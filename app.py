@@ -21,7 +21,7 @@ st.set_page_config(page_title="최웅식 후보 동선 관리", layout="wide")
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
 if 'last_lon' not in st.session_state: st.session_state.last_lon = None
 
-# 지역구 분류 함수 (사무장님 요청 스타일)
+# 지역구 분류 함수
 GAP_LIST = ["영등포동", "영등포본동", "당산1동", "당산2동", "도림동", "문래동", "양평1동", "양평2동", "신길1동", "신길2동", "신길3동"]
 EUL_LIST = ["여의동", "신길4동", "신길5동", "신길6동", "신길7동", "대림1동", "대림2동", "대림3동"]
 
@@ -54,6 +54,7 @@ try:
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
+    # [수정] 오타 절대 방지: 위도/경도 숫자 변환
     df['위도'] = pd.to_numeric(df['위도'], errors='coerce')
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
@@ -85,7 +86,7 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
-        # 리스트 정렬
+        # 리스트 정렬 (시간순 -> 거리순)
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
@@ -93,7 +94,8 @@ try:
             group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
             group_pending = group[group['참석여부'] == '미체크'].copy()
             if not group_pending.empty and current_anchor:
-                group_pending['dist'] = group_pending.apply(lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위_도']) else 999999, axis=1)
+                # [수정] 위_도 오타 제거 확인 완료
+                group_pending['dist'] = group_pending.apply(lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
                 group_pending = group_pending.sort_values('dist')
             group_no = group[group['참석여부'] == '불참석']
             final_list.append(pd.concat([group_att, group_pending, group_no]))
@@ -112,7 +114,7 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today)
 
-        # [4] 당일 일정 리스트 (내비 버튼 포함 유지)
+        # [4] 당일 일정 리스트 (내비 버튼 포함)
         st.subheader("📝 오늘 주요 일정 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
@@ -122,7 +124,8 @@ try:
                 if status == "미체크":
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
-                        update_sheet_status(orig_idx, "참석"); st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
+                        update_sheet_status(orig_idx, "참석")
+                        st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
                         time.sleep(1); st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
                         update_sheet_status(orig_idx, "불참석"); time.sleep(1); st.rerun()
@@ -130,33 +133,32 @@ try:
                     st.write(f"결과: {status}")
                     if st.button("🔄 재선택", key=f"re_{orig_idx}"):
                         update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                # 카카오내비 버튼 유지
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # --- [사무장님 요청: 이미지 스타일 참석 횟수 표 추가] ---
+    # [5] 참석 횟수 분석 전광판 (맨 하단 배치)
     st.divider()
     st.subheader("📊 지역구별 참석 횟수 현황")
     
-    # 실제 '참석' 데이터만 필터링
     attended_df = df[df['참석여부'] == '참석'].copy()
-    attended_df[['지역구', '분류동']] = attended_df.apply(lambda x: pd.Series(get_dong_group(x['주소'])), axis=1)
+    if not attended_df.empty:
+        attended_df[['지역구', '분류동']] = attended_df.apply(lambda x: pd.Series(get_dong_group(x['주소'])), axis=1)
 
-    # 1. 갑/을 요약 표
-    sum_tbl = pd.DataFrame({"갑": [len(attended_df[attended_df['지역구'] == "갑"])], 
-                            "을": [len(attended_df[attended_df['지역구'] == "을"])]})
-    st.table(sum_tbl)
+        sum_tbl = pd.DataFrame({"갑 참석 합계": [len(attended_df[attended_df['지역구'] == "갑"])], 
+                                "을 참석 합계": [len(attended_df[attended_df['지역구'] == "을"])]})
+        st.table(sum_tbl)
 
-    # 2. 동네별 상세 표
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### [갑]")
-        gap_targets = ["영등포(본)동", "당산1·2동", "도림동", "문래동", "양평1·2동", "신길1·2·3동"]
-        gap_data = [{"동네": d, "참석 횟수": len(attended_df[(attended_df['지역구']=="갑") & (attended_df['분류동']==d)])} for d in gap_targets]
-        st.table(pd.DataFrame(gap_data))
-    with col2:
-        st.markdown("### [을]")
-        eul_targets = ["여의동", "신길4·5·6·7동", "대림1·2·3동"]
-        eul_data = [{"동네": d, "참석 횟수": len(attended_df[(attended_df['지역구']=="을") & (attended_df['분류동']==d)])} for d in eul_targets]
-        st.table(pd.DataFrame(eul_data))
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### [영등포구 갑]")
+            gap_targets = ["영등포(본)동", "당산1·2동", "도림동", "문래동", "양평1·2동", "신길1·2·3동"]
+            gap_data = [{"동네": d, "참석 횟수": len(attended_df[(attended_df['지역구']=="갑") & (attended_df['분류동']==d)])} for d in gap_targets]
+            st.table(pd.DataFrame(gap_data))
+        with col2:
+            st.markdown("#### [영등포구 을]")
+            eul_targets = ["여의동", "신길4·5·6·7동", "대림1·2·3동"]
+            eul_data = [{"동네": d, "참석 횟수": len(attended_df[(attended_df['지역구']=="을") & (attended_df['분류동']==d)])} for d in eul_targets]
+            st.table(pd.DataFrame(eul_data))
 
 except Exception as e:
     st.error(f"오류: {e}")

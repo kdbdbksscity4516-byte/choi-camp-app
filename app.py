@@ -28,16 +28,15 @@ def update_sheet_status(row_idx, status_text):
     return False
 
 try:
-    # 데이터 강제 로드
+    # 2. 데이터 강제 로드 및 전처리
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
-    
     df['위도'] = pd.to_numeric(df['위도'], errors='coerce')
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
     
-    st.title("🚩 최웅식 후보자님 동선")
+    st.title("🚩 최웅식 후보자님 동선 (최적화 모드)")
 
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
@@ -52,58 +51,49 @@ try:
     day_df = df[df['날짜_str'] == selected_date].copy().reset_index()
     
     if not day_df.empty:
-        day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
+        # 시간 및 참석시간 변환
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # --- [로직 핵심: 고정된 단 하나의 기준점 찾기] ---
-        # 오늘 '참석'한 곳들 중 초단위로 가장 늦게(최근에) 누른 곳을 딱 하나만 찾습니다.
-        attended_df = day_df[day_df['참석여부'] == '참석'].dropna(subset=['참석시간_dt'])
+        # --- [새로운 핵심 정렬 로직] ---
+        # 1. 참석 완료 그룹 (누른 순서대로 상단 고정)
+        attended_df = day_df[day_df['참석여부'] == '참석'].sort_values('참석시간_dt', ascending=True)
         
-        final_reference = None # 오늘 하루의 새로운 기준점
+        # 2. 기준점(앵커) 찾기: 가장 최근에 '참석'을 누른 곳의 위치
+        anchor_coords = None
         if not attended_df.empty:
-            # 가장 최근에 '참석' 버튼을 누른 장소 (예: 전주)
-            latest_attended_row = attended_df.sort_values('참석시간_dt', ascending=False).iloc[0]
-            if not pd.isna(latest_attended_row['위도']):
-                final_reference = (latest_attended_row['위도'], latest_attended_row['경도'])
+            latest_attended = attended_df.iloc[-1]
+            if not pd.isna(latest_attended['위도']):
+                anchor_coords = (latest_attended['위도'], latest_attended['경도'])
+        
+        # 3. 미체크 그룹 처리
+        pending_df = day_df[day_df['참석여부'] == '미체크'].copy()
+        if not pending_df.empty:
+            if anchor_coords:
+                # 앵커가 있으면 모든 미체크 일정을 '앵커'와의 거리순으로 계산
+                pending_df['dist'] = pending_df.apply(
+                    lambda r: geodesic(anchor_coords, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 9999999, axis=1
+                )
+                pending_df = pending_df.sort_values('dist')
+            else:
+                # 앵커가 없으면(오늘 첫 시작) 시간순 정렬
+                pending_df = pending_df.sort_values('시간')
 
-        # 시간대별 그룹핑 시작
-        times = sorted(day_df['temp_time_dt'].dropna().unique())
-        final_list = []
+        # 4. 불참석 그룹 (맨 아래)
+        no_df = day_df[day_df['참석여부'] == '불참석']
+        
+        # 5. 최종 리스트 합치기: [참석완료] -> [가장 가까운 미체크들] -> [불참석]
+        display_df = pd.concat([attended_df, pending_df, no_df])
 
-        for t in times:
-            group = day_df[day_df['temp_time_dt'] == t].copy()
-            
-            # 1. 참석 그룹: 누른 시간 순서대로
-            group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
-            
-            # 2. 미체크 그룹: ★여기서 무조건 'final_reference(전주)' 기준으로 정렬★
-            group_pending = group[group['참석여부'] == '미체크'].copy()
-            if not group_pending.empty:
-                if final_reference:
-                    group_pending['dist'] = group_pending.apply(
-                        lambda r: geodesic(final_reference, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 9999999, axis=1
-                    )
-                    group_pending = group_pending.sort_values('dist')
-                else:
-                    group_pending['dist'] = 0 # 오늘 아직 아무것도 안 눌렀을 때
-            
-            group_no = group[group['참석여부'] == '불참석']
-            
-            # 시간대별로 합치기 (이제 전주 기준 거리가 반영된 상태로 합쳐짐)
-            sorted_group = pd.concat([group_att, group_pending, group_no])
-            final_list.append(sorted_group)
-
-        display_df = pd.concat(final_list)
-
-        # 지도 및 리스트 출력
-        st.subheader("📍 실시간 동선 지도")
+        # --- 지도 및 리스트 출력 ---
+        st.subheader("📍 실시간 최적화 동선")
         m_df = display_df[display_df['참석여부'] != '불참석']
         m_df = m_df[m_df['위도'].notna() & m_df['경도'].notna()]
         if not m_df.empty:
             m = folium.Map(location=[m_df.iloc[0]['위도'], m_df.iloc[0]['경도']], zoom_start=11)
             pts = [[r['위도'], r['경도']] for _, r in m_df.iterrows()]
             for _, r in m_df.iterrows():
-                folium.Marker([r['위도'], r['경도']], popup=r['행사명'], icon=folium.Icon(color='blue' if r['참석여부']=='참석' else 'red')).add_to(m)
+                icon_color = 'blue' if r['참석여부'] == '참석' else 'red'
+                folium.Marker([r['위도'], r['경도']], popup=r['행사명'], icon=folium.Icon(color=icon_color)).add_to(m)
             if len(pts) > 1: folium.PolyLine(pts, color="red", weight=3).add_to(m)
             folium_static(m)
 
@@ -116,17 +106,20 @@ try:
                 if status == "미체크":
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
-                        if update_sheet_status(orig_idx, "참석"): 
-                            time.sleep(1) # 시트 반영 대기
+                        if update_sheet_status(orig_idx, "참석"):
+                            st.cache_data.clear()
+                            time.sleep(1)
                             st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
-                        if update_sheet_status(orig_idx, "불참석"): 
+                        if update_sheet_status(orig_idx, "불참석"):
+                            st.cache_data.clear()
                             time.sleep(1)
                             st.rerun()
                 else:
                     st.success(f"결과: {status}")
                     if st.button("🔄 재선택", key=f"re_{orig_idx}"):
-                        if update_sheet_status(orig_idx, "미체크"): 
+                        if update_sheet_status(orig_idx, "미체크"):
+                            st.cache_data.clear()
                             time.sleep(1)
                             st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")

@@ -17,7 +17,7 @@ now_kst = datetime.now(KST)
 
 st.set_page_config(page_title="최웅식 후보자님 동선", layout="centered")
 
-# [핵심] 마지막 클릭 위치 기억 (새로고침 시 정렬 기준)
+# [핵심] 마지막 클릭 위치 기억
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
 if 'last_lon' not in st.session_state: st.session_state.last_lon = None
 
@@ -39,6 +39,12 @@ try:
 
     st.title("🚩 최웅식 후보자님 실시간 동선")
 
+    # --- [사무장님 요청: 새로고침 버튼 추가 구역] ---
+    if st.button("🔄 데이터 새로고침"):
+        st.cache_data.clear()
+        st.rerun()
+    # ------------------------------------------
+
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
     default_idx = available_dates.index(today_str) if today_str in available_dates else 0
@@ -50,7 +56,6 @@ try:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # [기준점 설정] 1순위: 방금 누른 곳(메모리), 2순위: 시트 상 마지막 참석지
         current_anchor = None
         if st.session_state.last_lat:
             current_anchor = (st.session_state.last_lat, st.session_state.last_lon)
@@ -60,7 +65,6 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
-        # 시간대별 정렬 (시간 틀 유지)
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
@@ -75,7 +79,6 @@ try:
 
         display_df = pd.concat(final_list)
 
-        # 3. 지도 출력 (빨간 선 기능 복구)
         st.subheader("📍 실시간 동선 지도")
         m_df = display_df[display_df['참석여부'] != '불참석']
         m_df = m_df[m_df['위도'].notna() & m_df['경도'].notna()]
@@ -86,12 +89,10 @@ try:
                 icon_color = 'blue' if r['참석여부'] == '참석' else 'red'
                 folium.Marker([r['위도'], r['경도']], popup=r['행사명'], icon=folium.Icon(color=icon_color)).add_to(m)
                 pts.append([r['위도'], r['경도']])
-            # [기능 유지] 참석지-미체크지를 잇는 빨간 선 표시
             if len(pts) > 1:
                 folium.PolyLine(pts, color="red", weight=3, opacity=0.8).add_to(m)
             folium_static(m)
 
-        # 4. 일정 리스트 출력
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
@@ -102,13 +103,12 @@ try:
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
                         update_sheet_status(orig_idx, "참석")
-                        # 전주를 누르는 순간 좌표 기억 -> 즉시 기준점 변경
                         st.session_state.last_lat = row['위도']
                         st.session_state.last_lon = row['경도']
-                        time.sleep(1) # 시트 기록 시간 확보
+                        time.sleep(1) 
                         st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
-                        update_sheet_status(orig_idx, "불참석")
+                        update_sheet_status(orig_idx, "불불참석")
                         st.rerun()
                 else:
                     st.success(f"결과: {row['참석여부']}")

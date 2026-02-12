@@ -16,7 +16,6 @@ script_url = "https://script.google.com/macros/s/AKfycbzlPtAOqvz0wSgbspGz9PbZuDc
 KST = timezone(timedelta(hours=9))
 now_kst = datetime.now(KST)
 
-# [설정] 페이지 레이아웃 및 타이틀
 st.set_page_config(page_title="최웅식 후보 동선 관리", layout="wide")
 
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
@@ -38,9 +37,9 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    # [수정 완료] 구글 드라이브 배너 이미지 주소 및 비율 고정
-    # 1200x300 비율을 유지하도록 설정했습니다.
-    st.image("https://drive.google.com/uc?export=view&id=1T0lLOjhA9OoO-0SXiO7eO1WYeIJ_mgk6", use_container_width=True)
+    # [수정 완료] 깃허브 원본 이미지 주소 적용 (잘림 방지 설정)
+    raw_img_url = "https://raw.githubusercontent.com/kdbdbksscity4516-byte/choi-camp-app/main/%EC%A0%9C%EB%AA%A9%EC%9D%84%20%EC%9E%85%EB%A0%A5%ED%95%B4%EC%A3%BC%20%EC%84%B8%EC%9A%94.%20(2).png"
+    st.image(raw_img_url, use_container_width=True)
 
     st.title("최웅식 후보 동선 최적화 & 활동 분석")
 
@@ -87,7 +86,7 @@ try:
 
         display_df = pd.concat(final_list)
 
-        # [지도 표시]
+        # 지도 표시
         st.subheader(f"📍 {selected_date} 상세 이동 경로")
         map_df_today = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
         if not map_df_today.empty:
@@ -100,7 +99,7 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today)
 
-        # [리스트 표시]
+        # 리스트 표시
         st.subheader("📝 오늘 주요 일정 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
@@ -135,4 +134,4 @@ try:
         folium_static(m_all)
 
 except Exception as e:
-    st.error(f"오류가 발생했습니다: {e}")
+    st.error(f"오류: {e}")

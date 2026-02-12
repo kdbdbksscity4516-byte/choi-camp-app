@@ -28,25 +28,25 @@ def update_sheet_status(row_idx, status_text):
         st.error("📡 시트 연결 실패")
     return False
 
-# 버튼 스타일 설정
 st.markdown("""<style> div.stButton > button { width: 100% !important; height: 50px !important; } </style>""", unsafe_allow_html=True)
 
 try:
     # 데이터 강제 로드
     fresh_url = f"{sheet_url}&t={int(time.time())}"
     df = pd.read_csv(fresh_url)
+    
+    # [중요] 모든 공란을 "미체크"로 미리 채워줍니다.
     df = df.fillna("")
+    df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
     
     if df.empty:
         st.error("⚠️ 시트에 데이터가 없습니다.")
         st.stop()
 
-    # 데이터 전처리
     df['위도'] = pd.to_numeric(df['위도'], errors='coerce')
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
     
-    # 상단 사진 표시
     if '사진' in df.columns:
         photo_list = [p for p in df['사진'].tolist() if str(p).startswith('http')]
         if photo_list:
@@ -79,7 +79,7 @@ try:
         final_list = []
         last_ref = None
         
-        # 마지막 참석지 기준 설정
+        # 마지막 참석지 기준
         last_att = day_df[day_df['참석여부'] == '참석'].sort_values('참석시간_dt')
         if not last_att.empty:
             row = last_att.iloc[-1]
@@ -130,7 +130,7 @@ try:
             with st.container(border=True):
                 st.markdown(f"### {row['시간']} | {row['행사명']}")
                 st.caption(f"📍 {row['주소']}")
-                status = str(row['참석여부']).strip() or "미체크"
+                status = str(row['참석여부']).strip()
                 
                 if status == "미체크":
                     c1, c2 = st.columns(2)

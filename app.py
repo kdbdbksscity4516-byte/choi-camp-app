@@ -37,6 +37,10 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
+    # [수정] 상단 이미지 배치 (ID 추출하여 직링크로 변환 완료)
+    # 사무장님이 주신 주소에서 ID만 따서 새로 구성했습니다.
+    st.image("https://drive.google.com/uc?id=1T0lLOjhA9OoO-0SXiO7eO1WYeIJ_mgk6", use_container_width=True)
+
     st.title("최웅식 후보 동선 최적화 & 활동 분석")
 
     if st.button("🔄 전체 새로고침 (F5)"):
@@ -54,21 +58,16 @@ try:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # [정렬 로직 시작]
+        # [정렬 로직]
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         current_anchor = None
 
         for t in times:
             group = day_df[day_df['temp_time_dt'] == t].copy()
-            
-            # 1. 참석자들 (참석 누른 시간순 정렬)
             group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
-            
-            # 2. 미체크 항목들 거리 계산
             group_pending = group[group['참석여부'] == '미체크'].copy()
             
-            # 기준점 업데이트 (참석한게 있으면 마지막 참석지점, 없으면 이전 시간대 마지막 지점)
             if not group_att.empty:
                 last_att = group_att.iloc[-1]
                 if not pd.isna(last_att['위도']):
@@ -79,7 +78,6 @@ try:
                     group_pending['dist'] = group_pending.apply(lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
                     group_pending = group_pending.sort_values('dist')
                 
-                # 만약 아직 기준점이 없다면 (오늘 첫 일정 등), 미체크의 첫 번째를 기준점으로 설정 (다음 동선용)
                 if current_anchor is None and not pd.isna(group_pending.iloc[0]['위도']):
                     current_anchor = (group_pending.iloc[0]['위도'], group_pending.iloc[0]['경도'])
             
@@ -124,7 +122,6 @@ try:
                     if st.button("🔄 재선택", key=f"re_at_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # [하단 누적 분석]
     st.divider()
     st.subheader("📊 선거 운동 누적 활동 분석")
     all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]

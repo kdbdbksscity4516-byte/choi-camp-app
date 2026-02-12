@@ -21,18 +21,6 @@ st.set_page_config(page_title="최웅식 후보 동선 관리", layout="wide")
 if 'last_lat' not in st.session_state: st.session_state.last_lat = None
 if 'last_lon' not in st.session_state: st.session_state.last_lon = None
 
-# [동네 분류 로직] 사무장님 요청 기준
-def get_dong_group(address):
-    addr = str(address)
-    gap_list = ["영등포동", "영등포본동", "당산1동", "당산2동", "도림동", "문래동", "양평1동", "양평2동", "신길1동", "신길2동", "신길3동"]
-    eul_list = ["여의동", "신길4동", "신길5동", "신길6동", "신길7동", "대림1동", "대림2동", "대림3동"]
-    
-    for d in gap_list:
-        if d in addr: return "갑", d
-    for d in eul_list:
-        if d in addr: return "을", d
-    return "기타", "기타"
-
 def update_sheet_status(row_idx, status_text):
     api_url = f"{script_url}?row={row_idx}&status={urllib.parse.quote(status_text)}"
     try:
@@ -41,7 +29,7 @@ def update_sheet_status(row_idx, status_text):
     except: return False
 
 try:
-    # 2. 데이터 로드
+    # 데이터 로드
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
@@ -49,6 +37,7 @@ try:
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
+    # [수정] 깃발 제거 및 제목 변경
     st.title("최웅식 후보 동선 최적화 & 활동 분석")
 
     # [1] 전체 새로고침 버튼
@@ -77,7 +66,7 @@ try:
                 row = attended_all.iloc[0]
                 if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
 
-        # 리스트 정렬 로직 (사무장님 원본)
+        # 리스트 정렬 로직 (시간순 -> 거리순)
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
         for t in times:
@@ -92,17 +81,23 @@ try:
 
         display_df = pd.concat(final_list)
 
-        # [3] 당일 지도
+        # [3] 당일 상세 이동 경로 지도 (상단 배치)
         st.subheader(f"📍 {selected_date} 상세 이동 경로")
         map_df_today = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
         if not map_df_today.empty:
             m_today = folium.Map(location=[map_df_today.iloc[0]['위도'], map_df_today.iloc[0]['경도']], zoom_start=12)
+            line_pts = []
             for _, r in map_df_today.iterrows():
-                m_color = 'blue' if r['참석여부'] == '참석' else 'gray' if r['참석여부'] == '미체크' else 'red'
-                folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color)).add_to(m_today)
+                if r['참석여부'] == '참석': m_color, m_icon, add_line = 'blue', 'check', True
+                elif r['참석여부'] == '미체크': m_color, m_icon, add_line = 'gray', 'time', True
+                else: m_color, m_icon, add_line = 'red', 'remove', False
+                
+                folium.Marker([r['위도'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_today)
+                if add_line: line_pts.append([r['위도'], r['경도']])
+            if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today)
 
-        # [4] 일정 리스트
+        # [4] 당일 일정 리스트 (중단 배치)
         st.subheader("📝 오늘 주요 일정 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
@@ -116,37 +111,38 @@ try:
                         st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
                         time.sleep(1); st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
-                        update_sheet_status(orig_idx, "불참석"); time.sleep(1); st.rerun()
+                        update_sheet_status(orig_idx, "불참석")
+                        time.sleep(1); st.rerun()
                 elif status == "불참석":
                     st.error(f"결과: {status}")
-                    if st.button("🔄 재선택 (복구)", key=f"re_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                    if st.button("🔄 재선택 (복구)", key=f"re_{orig_idx}"):
+                        update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 else:
                     st.success(f"결과: {status}")
-                    if st.button("🔄 재선택", key=f"re_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                    if st.button("🔄 재선택", key=f"re_{orig_idx}"):
+                        update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # [5] 하단 분석 (숫자 요약 표)
+    # [5] 선거 운동 누적 활동 분석 (맨 하단 배치)
     st.divider()
-    st.subheader("📊 지역구별 참석 통계 (숫자 요약)")
+    st.subheader("📊 선거 운동 누적 활동 분석")
+    st.caption("참석(파랑)과 불참석(빨강) 데이터의 지역적 분포입니다. (미체크 항목 제외)")
     
-    attended_df = df[df['참석여부'].str.strip() == '참석'].copy()
-    if not attended_df.empty:
-        attended_df[['지역구', '동네명']] = attended_df.apply(lambda x: pd.Series(get_dong_group(x['주소'])), axis=1)
-        
-        st.markdown("#### [영등포구 총괄]")
-        st.dataframe(pd.DataFrame({"갑 참석 합계": [len(attended_df[attended_df['지역구'] == "갑"])], "을 참석 합계": [len(attended_df[attended_df['지역구'] == "을"])]}), use_container_width=True, hide_index=True)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### [영등포구 갑]")
-            gap_target = ["영등포동", "영등포본동", "당산1동", "당산2동", "도림동", "문래동", "양평1동", "양평2동", "신길1동", "신길2동", "신길3동"]
-            gap_res = [{"동네": d, "참석수": len(attended_df[attended_df['동네명'] == d])} for d in gap_target]
-            st.dataframe(pd.DataFrame(gap_res), use_container_width=True, hide_index=True)
-        with col2:
-            st.markdown("#### [영등포구 을]")
-            eul_target = ["여의동", "신길4동", "신길5동", "신길6동", "신길7동", "대림1동", "대림2동", "대림3동"]
-            eul_res = [{"동네": d, "참석수": len(attended_df[attended_df['동네명'] == d])} for d in eul_target]
-            st.dataframe(pd.DataFrame(eul_res), use_container_width=True, hide_index=True)
+    all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
+    all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
+    
+    if not all_map_df.empty:
+        m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=11)
+        for _, r in all_map_df.iterrows():
+            m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
+            folium.Marker(
+                [r['위도'], r['경도']], 
+                popup=f"{r['날짜']} | {r['행사명']}", 
+                icon=folium.Icon(color=m_color, icon=m_icon)
+            ).add_to(m_all)
+        folium_static(m_all)
+    else:
+        st.write("누적 데이터가 없습니다.")
 
 except Exception as e:
     st.error(f"오류: {e}")

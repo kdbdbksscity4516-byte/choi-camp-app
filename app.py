@@ -18,7 +18,6 @@ now_kst = datetime.now(KST)
 st.set_page_config(page_title="최웅식 후보자님 동선", layout="centered")
 
 def update_sheet_status(row_idx, status_text):
-    # 업데이트 시 타임스탬프를 함께 보내도록 설계 (이미 앱스크립트에 포함되어 있음)
     api_url = f"{script_url}?row={row_idx}&status={urllib.parse.quote(status_text)}"
     try:
         res = requests.get(api_url, timeout=15)
@@ -53,54 +52,50 @@ try:
     day_df = df[df['날짜_str'] == selected_date].copy().reset_index()
     
     if not day_df.empty:
-        # 시간 데이터 변환 (정렬용)
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
-        # 참석시간 데이터 변환 (가장 최근 방문지 확인용)
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
-        # --- [가장 중요한 실시간 기준점 설정] ---
-        # 오늘 일정 중 '참석' 상태인 것들만 추려서 '참석시간'이 가장 늦은(최근인) 행을 찾습니다.
-        attended_only = day_df[day_df['참석여부'] == '참석'].dropna(subset=['참석시간_dt'])
+        # --- [로직 핵심: 고정된 단 하나의 기준점 찾기] ---
+        # 오늘 '참석'한 곳들 중 초단위로 가장 늦게(최근에) 누른 곳을 딱 하나만 찾습니다.
+        attended_df = day_df[day_df['참석여부'] == '참석'].dropna(subset=['참석시간_dt'])
         
-        last_ref_coords = None
-        if not attended_only.empty:
-            # 가장 최근에 누른 곳이 맨 위로 오게 정렬 후 첫 번째 행 선택
-            latest_row = attended_only.sort_values('참석시간_dt', ascending=False).iloc[0]
-            if not pd.isna(latest_row['위도']):
-                last_ref_coords = (latest_row['위도'], latest_row['경도'])
+        final_reference = None # 오늘 하루의 새로운 기준점
+        if not attended_df.empty:
+            # 가장 최근에 '참석' 버튼을 누른 장소 (예: 전주)
+            latest_attended_row = attended_df.sort_values('참석시간_dt', ascending=False).iloc[0]
+            if not pd.isna(latest_attended_row['위도']):
+                final_reference = (latest_attended_row['위도'], latest_attended_row['경도'])
 
-        # 시간대별 그룹핑
+        # 시간대별 그룹핑 시작
         times = sorted(day_df['temp_time_dt'].dropna().unique())
         final_list = []
 
         for t in times:
             group = day_df[day_df['temp_time_dt'] == t].copy()
             
-            # 1. 참석 그룹: 누른 시간 순서대로 정렬
+            # 1. 참석 그룹: 누른 시간 순서대로
             group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
             
-            # 2. 미체크 그룹: 위에서 찾은 '최근 방문지(last_ref_coords)' 기준으로 정렬
+            # 2. 미체크 그룹: ★여기서 무조건 'final_reference(전주)' 기준으로 정렬★
             group_pending = group[group['참석여부'] == '미체크'].copy()
             if not group_pending.empty:
-                if last_ref_coords:
+                if final_reference:
                     group_pending['dist'] = group_pending.apply(
-                        lambda r: geodesic(last_ref_coords, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 9999999, axis=1
+                        lambda r: geodesic(final_reference, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 9999999, axis=1
                     )
                     group_pending = group_pending.sort_values('dist')
                 else:
-                    # 오늘 아무것도 안 눌렀다면 시트 입력 순서대로
-                    group_pending['dist'] = 0
+                    group_pending['dist'] = 0 # 오늘 아직 아무것도 안 눌렀을 때
             
-            # 3. 불참석 그룹
             group_no = group[group['참석여부'] == '불참석']
             
-            # 합체
+            # 시간대별로 합치기 (이제 전주 기준 거리가 반영된 상태로 합쳐짐)
             sorted_group = pd.concat([group_att, group_pending, group_no])
             final_list.append(sorted_group)
 
         display_df = pd.concat(final_list)
 
-        # 지도 및 리스트 출력 (이전과 동일)
+        # 지도 및 리스트 출력
         st.subheader("📍 실시간 동선 지도")
         m_df = display_df[display_df['참석여부'] != '불참석']
         m_df = m_df[m_df['위도'].notna() & m_df['경도'].notna()]
@@ -122,7 +117,7 @@ try:
                     c1, c2 = st.columns(2)
                     if c1.button("🟢 참석", key=f"at_{orig_idx}"):
                         if update_sheet_status(orig_idx, "참석"): 
-                            time.sleep(1) # 시트 반영 시간을 위해 아주 잠깐 대기
+                            time.sleep(1) # 시트 반영 대기
                             st.rerun()
                     if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
                         if update_sheet_status(orig_idx, "불참석"): 

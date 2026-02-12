@@ -39,6 +39,7 @@ def update_sheet_status(row_idx, status_text):
     except: return False
 
 try:
+    # 데이터 로드 및 전처리
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
@@ -52,57 +53,109 @@ try:
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
-    # [날짜 선택 및 상세 동선/리스트 - 기존 코드 유지]
+    # [1] 날짜 선택 및 데이터 필터링
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
     default_idx = available_dates.index(today_str) if today_str in available_dates else 0
-    selected_date = st.selectbox("🗓️ 상세 동선 날짜 선택", available_dates, index=default_idx)
+    selected_date = st.selectbox("🗓️ 날짜 선택", available_dates, index=default_idx)
 
     day_df = df[df['날짜_str'] == selected_date].copy().reset_index()
 
     if not day_df.empty:
-        # (생략: 당일 지도 및 리스트 출력 로직은 이전과 동일)
-        # ... [중략] ...
+        # 시간 및 정렬 로직 (이전 로직과 동일)
+        day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
+        day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
+        
+        current_anchor = None
+        if st.session_state.last_lat:
+            current_anchor = (st.session_state.last_lat, st.session_state.last_lon)
+        else:
+            attended_all = day_df[day_df['참석여부'] == '참석'].sort_values('참석시간_dt', ascending=False)
+            if not attended_all.empty:
+                row = attended_all.iloc[0]
+                if not pd.isna(row['위도']): current_anchor = (row['위도'], row['경도'])
+
+        times = sorted(day_df['temp_time_dt'].dropna().unique())
+        final_list = []
+        for t in times:
+            group = day_df[day_df['temp_time_dt'] == t].copy()
+            group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
+            group_pending = group[group['참석여부'] == '미체크'].copy()
+            if not group_pending.empty and current_anchor:
+                group_pending['dist'] = group_pending.apply(lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
+                group_pending = group_pending.sort_values('dist')
+            group_no = group[group['참석여부'] == '불참석']
+            final_list.append(pd.concat([group_att, group_pending, group_no]))
+        display_df = pd.concat(final_list)
+
+        # [2] 당일 상세 지도
         st.subheader(f"📍 {selected_date} 상세 이동 경로")
-        map_df_today = day_df[day_df['위도'].notna()]
+        map_df_today = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
         if not map_df_today.empty:
-            m_today = folium.Map(location=[map_df_today.iloc[0]['위도'], map_df_today.iloc[0]['경도']], zoom_start=12)
-            # (마커 및 라인 그리기...)
+            m_today = folium.Map(location=[map_df_today.iloc[0]['위도'], map_df_today.iloc[0]['경도']], zoom_start=13)
+            pts = []
+            for _, r in map_df_today.iterrows():
+                if r['참석여부'] == '참석': m_color, m_icon, add_line = 'blue', 'check', True
+                elif r['참석여부'] == '미체크': m_color, m_icon, add_line = 'gray', 'time', True
+                else: m_color, m_icon, add_line = 'red', 'remove', False
+                folium.Marker([r['위도'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_today)
+                if add_line: pts.append([r['위도'], r['경도']])
+            if len(pts) > 1: folium.PolyLine(pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today)
 
+        # [3] 주요 일정 리스트 (복구됨!)
         st.subheader("📝 오늘 주요 일정 리스트")
-        # (일정 카드들 출력...)
+        for _, row in display_df.iterrows():
+            orig_idx = row['index']
+            with st.container(border=True):
+                st.markdown(f"### {row['시간']} | {row['행사명']}")
+                status = str(row['참석여부']).strip()
+                if status == "미체크":
+                    c1, c2 = st.columns(2)
+                    if c1.button("🟢 참석", key=f"at_{orig_idx}"):
+                        update_sheet_status(orig_idx, "참석")
+                        st.session_state.last_lat, st.session_state.last_lon = row['위도'], row['경도']
+                        time.sleep(1); st.rerun()
+                    if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
+                        update_sheet_status(orig_idx, "불참석")
+                        time.sleep(1); st.rerun()
+                elif status == "불참석":
+                    st.error(f"결과: {status}")
+                    if st.button("🔄 재선택 (복구)", key=f"re_{orig_idx}"):
+                        update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                else:
+                    st.success(f"결과: {status}")
+                    if st.button("🔄 재선택", key=f"re_{orig_idx}"):
+                        update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
+                st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # --- [사무장님 요청: 수치 분석 표 전면 노출] ---
+    # [4] 하단: 지역구별 실제 참석 횟수 통계
     st.divider()
-    st.subheader("📊 선거 운동 누적 활동 분석")
+    st.subheader("📊 지역구별 실제 참석 횟수")
+    
+    # 실제 '참석' 데이터만 필터링해서 통계 작성
+    attended_df = df[df['참석여부'] == '참석'].copy()
+    attended_df[['지역구', '행정동']] = attended_df.apply(lambda x: pd.Series(get_district_info(str(x['주소']))), axis=1)
 
-    analysis_df = df.copy()
-    analysis_df[['지역구', '행정동']] = analysis_df.apply(lambda x: pd.Series(get_district_info(str(x['주소']))), axis=1)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("#### 🏛️ 갑/을 참석 횟수")
+        summary_gap_eul = attended_df.groupby('지역구').size().reset_index(name='참석 횟수')
+        st.table(summary_gap_eul)
 
-    # 1. 영등포구 갑/을 요약 표
-    st.markdown("#### 🏛️ 지역구별 요약 (갑/을)")
-    summary = analysis_df.groupby(['지역구', '참석여부']).size().unstack(fill_value=0)
-    for col in ['참석', '불참석', '미체크']:
-        if col not in summary.columns: summary[col] = 0
-    st.table(summary[['참석', '불참석', '미체크']])
+    with col2:
+        st.markdown("#### 🏘️ 행정동별 참석 횟수")
+        summary_dong = attended_df.groupby(['지역구', '행정동']).size().reset_index(name='참석 횟수')
+        summary_dong = summary_dong.sort_values(by=['지역구', '참석 횟수'], ascending=[True, False])
+        st.dataframe(summary_dong, use_container_width=True, hide_index=True)
 
-    # 2. 행정동별 상세 활동 현황 표
-    st.markdown("#### 🏘️ 행정동별 상세 활동 현황")
-    detail_summary = analysis_df.groupby(['지역구', '행정동', '참석여부']).size().unstack(fill_value=0)
-    for col in ['참석', '불참석', '미체크']:
-        if col not in detail_summary.columns: detail_summary[col] = 0
-    # 행정동 상세표는 데이터가 많을 수 있으므로 dataframe으로 깔끔하게 노출
-    st.dataframe(detail_summary[['참석', '불참석', '미체크']], use_container_width=True)
-
-    # 3. 누적 활동 지도 (맨 아래)
-    st.markdown("#### 🗺️ 누적 활동 지도")
-    all_map_df = df[df['참석여부'].isin(['참석', '불참석']) & df['위도'].notna()]
-    if not all_map_df.empty:
-        m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=12)
-        for _, r in all_map_df.iterrows():
-            m_color = 'blue' if r['참석여부'] == '참석' else 'red'
-            folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color)).add_to(m_all)
+    # [5] 최하단: 누적 활동 분포 지도
+    st.divider()
+    st.subheader("🗺️ 선거 활동 누적 분포 (참석 지점)")
+    if not attended_df.empty:
+        m_all = folium.Map(location=[attended_df['위도'].mean(), attended_df['경도'].mean()], zoom_start=12)
+        for _, r in attended_df.iterrows():
+            folium.CircleMarker([r['위도'], r['경도']], radius=5, color='blue', fill=True, fill_color='blue', popup=r['행사명']).add_to(m_all)
         folium_static(m_all)
 
 except Exception as e:

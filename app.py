@@ -49,7 +49,7 @@ try:
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
-    # --- [전화 연결 기능 포함] 금일 일정 요약 섹션 ---
+    # --- [금일 일정 요약] ---
     today_str_check = now_kst.strftime('%Y-%m-%d')
     today_summary_df = df[df['날짜_str'] == today_str_check].copy()
     
@@ -82,7 +82,6 @@ try:
 
     day_df = df[df['날짜_str'] == selected_date].copy().reset_index()
 
-    # 1. 상세 동선 표시 블록
     if not day_df.empty:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
@@ -150,17 +149,29 @@ try:
                     if st.button("🔄 재선택", key=f"re_at_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # 📊 누적 분석 지도 (if 블록 밖으로 꺼내서 상시 노출)
+    # 📊 [보강] 선거 운동 누적 활동 분석 지도
     st.divider()
     st.subheader("📊 선거 운동 누적 활동 분석")
+    
+    # 참석/불참석 데이터만 필터링
     all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
     all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
+    
+    # 지도의 중심점 계산 (데이터가 없으면 서울 시청 기준)
     if not all_map_df.empty:
-        m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=11)
+        center_lat = all_map_df['위도'].mean()
+        center_lon = all_map_df['경도'].mean()
+        m_all = folium.Map(location=[center_lat, center_lon], zoom_start=11)
+        
         for _, r in all_map_df.iterrows():
             m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
             folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)
-        folium_static(m_all, width=None, height=250)
+    else:
+        # 데이터가 없을 때 보여줄 기본 지도 (서울)
+        m_all = folium.Map(location=[37.5665, 126.9780], zoom_start=11)
+        st.info("아직 누적 기록(참석/불참석)이 없습니다. 활동 기록을 남기면 여기에 표시됩니다.")
+
+    folium_static(m_all, width=None, height=250)
 
 except Exception as e:
     st.error(f"오류: {e}")

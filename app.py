@@ -150,4 +150,17 @@ try:
                     if st.button("🔄 재선택", key=f"re_at_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # 📊 누적 분석 지도 (if 블록 밖
+    # 📊 누적 분석 지도 (if 블록 밖으로 꺼내서 상시 노출)
+    st.divider()
+    st.subheader("📊 선거 운동 누적 활동 분석")
+    all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
+    all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
+    if not all_map_df.empty:
+        m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=11)
+        for _, r in all_map_df.iterrows():
+            m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
+            folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)
+        folium_static(m_all, width=None, height=250)
+
+except Exception as e:
+    st.error(f"오류: {e}")

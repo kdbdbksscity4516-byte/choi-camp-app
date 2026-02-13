@@ -49,6 +49,26 @@ try:
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
+    # --- [신규 추가] 금일 일정 요약 섹션 ---
+    today_str_check = now_kst.strftime('%Y-%m-%d')
+    today_summary_df = df[df['날짜_str'] == today_str_check].copy()
+    
+    with st.expander("📅 금일 전체 일정 요약 (한눈에 보기)", expanded=True):
+        if not today_summary_df.empty:
+            # 시간순으로 정렬해서 보여줌
+            today_summary_df['temp_time'] = pd.to_datetime(today_summary_df['시간'], errors='coerce')
+            summary_list = today_summary_df.sort_values('temp_time')
+            
+            for _, row in summary_list.iterrows():
+                status_icon = "⚪"
+                if row['참석여부'] == "참석": status_icon = "🔵"
+                elif row['참석여부'] == "불참석": status_icon = "🔴"
+                
+                st.markdown(f"{status_icon} **{row['시간']}** | {row['행사명']}")
+        else:
+            st.write("오늘 예정된 일정이 없습니다.")
+    # ---------------------------------------
+
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
     default_idx = available_dates.index(today_str) if today_str in available_dates else 0
@@ -67,24 +87,19 @@ try:
         for t in times:
             group = day_df[day_df['temp_time_dt'] == t].copy()
             
-            # [수정 로직] 1. 해당 시간대에서 이미 '참석'한 일정이 있다면 그 중 마지막을 기준점으로 잡습니다.
             group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
             if not group_att.empty:
                 last_att = group_att.iloc[-1]
                 if not pd.isna(last_att['위도']):
                     current_anchor = (last_att['위도'], last_att['경도'])
             
-            # 2. '참석'한 게 없더라도, current_anchor가 비어있다면(첫 일정이거나 버튼 안 누름) 
-            # 해당 시간대 리스트의 가장 첫 번째 일정을 기준점으로 강제 설정합니다.
             group_pending = group[group['참석여부'] == '미체크'].copy()
             if not group_pending.empty:
                 if current_anchor is None:
-                    # 첫 번째 미체크 일정의 좌표를 기준점으로 삼음
                     first_row = group_pending.iloc[0]
                     if not pd.isna(first_row['위도']):
                         current_anchor = (first_row['위도'], first_row['경도'])
                 
-                # 기준점이 설정되었다면 거리순으로 정렬
                 if current_anchor:
                     group_pending['dist'] = group_pending.apply(
                         lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters 
@@ -92,7 +107,6 @@ try:
                     )
                     group_pending = group_pending.sort_values('dist')
                 
-                # 다음 시간대를 위해 이 시간대의 마지막 미체크 일정을 기준점으로 업데이트(동선 연결)
                 last_pending = group_pending.iloc[-1]
                 if not pd.isna(last_pending['위도']):
                     current_anchor = (last_pending['위도'], last_pending['경도'])
@@ -114,7 +128,7 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today, width=None, height=350)
 
-        st.subheader("📝 오늘 주요 일정 리스트")
+        st.subheader("📝 상세 활동 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):

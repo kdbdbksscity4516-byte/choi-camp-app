@@ -33,7 +33,6 @@ def update_sheet_status(row_idx, status_text):
     except: return False
 
 try:
-    # 캐시 방지를 위해 현재 시간을 쿼리 스트링에 포함
     df = pd.read_csv(f"{sheet_url}&t={int(time.time())}")
     df = df.fillna("")
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
@@ -50,7 +49,7 @@ try:
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
-    # --- [업데이트] 금일 일정 요약 + 수행자 전화연결 ---
+    # --- [요약 박스] 금일 일정 요약 + 수행자 전화연결 ---
     today_str_check = now_kst.strftime('%Y-%m-%d')
     today_summary_df = df[df['날짜_str'] == today_str_check].copy()
     
@@ -64,13 +63,10 @@ try:
                 if row['참석여부'] == "참석": status_icon = "🔵"
                 elif row['참석여부'] == "불참석": status_icon = "🔴"
                 
-                # 시트에서 '수행자', '수행자전화번호' 데이터 읽기
-                # 열 이름이 정확히 일치해야 합니다.
                 person = str(row['수행자']).strip() if '수행자' in row and row['수행자'] != "" else "담당자미정"
                 phone = str(row['수행자전화번호']).strip() if '수행자전화번호' in row and row['수행자전화번호'] != "" else ""
                 
                 if phone:
-                    # 전화번호에서 하이픈 제거 후 링크 생성
                     clean_phone = phone.replace("-", "")
                     contact_html = f"<a href='tel:{clean_phone}' style='color: #007bff; text-decoration: underline; font-weight: bold;'>{person}</a>"
                     st.markdown(f"{status_icon} **{row['시간']}** | {row['행사명']} ({contact_html})", unsafe_allow_html=True)
@@ -78,7 +74,6 @@ try:
                     st.markdown(f"{status_icon} **{row['시간']}** | {row['행사명']} ({person})")
         else:
             st.write("오늘 예정된 일정이 없습니다.")
-    # --------------------------------------------------
 
     available_dates = sorted([d for d in df['날짜_str'].unique() if d and d != "nan"])
     today_str = now_kst.strftime('%Y-%m-%d')
@@ -88,7 +83,6 @@ try:
     day_df = df[df['날짜_str'] == selected_date].copy().reset_index()
 
     if not day_df.empty:
-        # [정렬 로직 시작]
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
         day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
         
@@ -109,60 +103,4 @@ try:
             if not group_pending.empty:
                 if current_anchor is None:
                     first_row = group_pending.iloc[0]
-                    if not pd.isna(first_row['위도']):
-                        current_anchor = (first_row['위도'], first_row['경도'])
-                
-                if current_anchor:
-                    group_pending['dist'] = group_pending.apply(
-                        lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters 
-                        if not pd.isna(r['위도']) else 999999, axis=1
-                    )
-                    group_pending = group_pending.sort_values('dist')
-                
-                last_pending = group_pending.iloc[-1]
-                if not pd.isna(last_pending['위도']):
-                    current_anchor = (last_pending['위도'], last_pending['경도'])
-            
-            group_no = group[group['참석여부'] == '불참석']
-            final_list.append(pd.concat([group_att, group_pending, group_no]))
-
-        display_df = pd.concat(final_list)
-
-        # 지도 표시
-        st.subheader(f"📍 {selected_date} 상세 이동 경로")
-        map_df_today = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
-        if not map_df_today.empty:
-            m_today = folium.Map(location=[map_df_today.iloc[0]['위도'], map_df_today.iloc[0]['경도']], zoom_start=12)
-            line_pts = []
-            for _, r in map_df_today.iterrows():
-                m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('gray', 'time') if r['참석여부'] == '미체크' else ('red', 'remove')
-                folium.Marker([r['위도'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_today)
-                if r['참석여부'] != '불참석': line_pts.append([r['위도'], r['경도']])
-            if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
-            folium_static(m_today, width=None, height=350)
-
-        # 활동 리스트 (카드 형태)
-        st.subheader("📝 상세 활동 리스트")
-        for _, row in display_df.iterrows():
-            orig_idx = row['index']
-            with st.container(border=True):
-                st.markdown(f"### {row['시간']} | {row['행사명']}")
-                # 리스트에서도 수행자 표시
-                person_list = str(row['수행자']).strip() if '수행자' in row and row['수행자'] != "" else "담당자미정"
-                st.write(f"👤 수행자: {person_list}")
-                
-                status = str(row['참석여부']).strip()
-                if status == "미체크":
-                    c1, c2 = st.columns(2)
-                    if c1.button("🟢 참석", key=f"at_{orig_idx}"):
-                        update_sheet_status(orig_idx, "참석")
-                        time.sleep(1); st.rerun()
-                    if c2.button("🔴 불참석", key=f"no_{orig_idx}"):
-                        update_sheet_status(orig_idx, "불참석"); time.sleep(1); st.rerun()
-                else:
-                    st.success(f"결과: {status}")
-                    if st.button("🔄 재선택", key=f"re_at_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
-                st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
-
-except Exception as e:
-    st.error(f"오류: {e}")
+                    if not pd.

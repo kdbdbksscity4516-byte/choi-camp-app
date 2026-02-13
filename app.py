@@ -66,21 +66,36 @@ try:
 
         for t in times:
             group = day_df[day_df['temp_time_dt'] == t].copy()
-            group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
-            group_pending = group[group['참석여부'] == '미체크'].copy()
             
+            # [수정 로직] 1. 해당 시간대에서 이미 '참석'한 일정이 있다면 그 중 마지막을 기준점으로 잡습니다.
+            group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
             if not group_att.empty:
                 last_att = group_att.iloc[-1]
                 if not pd.isna(last_att['위도']):
                     current_anchor = (last_att['위도'], last_att['경도'])
             
+            # 2. '참석'한 게 없더라도, current_anchor가 비어있다면(첫 일정이거나 버튼 안 누름) 
+            # 해당 시간대 리스트의 가장 첫 번째 일정을 기준점으로 강제 설정합니다.
+            group_pending = group[group['참석여부'] == '미체크'].copy()
             if not group_pending.empty:
+                if current_anchor is None:
+                    # 첫 번째 미체크 일정의 좌표를 기준점으로 삼음
+                    first_row = group_pending.iloc[0]
+                    if not pd.isna(first_row['위도']):
+                        current_anchor = (first_row['위도'], first_row['경도'])
+                
+                # 기준점이 설정되었다면 거리순으로 정렬
                 if current_anchor:
-                    group_pending['dist'] = group_pending.apply(lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
+                    group_pending['dist'] = group_pending.apply(
+                        lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters 
+                        if not pd.isna(r['위도']) else 999999, axis=1
+                    )
                     group_pending = group_pending.sort_values('dist')
                 
-                if current_anchor is None and not pd.isna(group_pending.iloc[0]['위도']):
-                    current_anchor = (group_pending.iloc[0]['위도'], group_pending.iloc[0]['경도'])
+                # 다음 시간대를 위해 이 시간대의 마지막 미체크 일정을 기준점으로 업데이트(동선 연결)
+                last_pending = group_pending.iloc[-1]
+                if not pd.isna(last_pending['위도']):
+                    current_anchor = (last_pending['위도'], last_pending['경도'])
             
             group_no = group[group['참석여부'] == '불참석']
             final_list.append(pd.concat([group_att, group_pending, group_no]))
@@ -97,8 +112,6 @@ try:
                 folium.Marker([r['위도'], r['경도']], popup=f"{r['시간']} {r['행사명']}", icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_today)
                 if r['참석여부'] != '불참석': line_pts.append([r['위도'], r['경도']])
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
-            
-            # [수정 포인트] 지도의 세로 높이를 350으로 줄여 리스트가 빨리 보이게 함
             folium_static(m_today, width=None, height=350)
 
         st.subheader("📝 오늘 주요 일정 리스트")
@@ -132,8 +145,6 @@ try:
         for _, r in all_map_df.iterrows():
             m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
             folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)
-        
-        # 누적 분석 지도는 높이를 더 작게(250) 설정해서 공간을 아낍니다.
         folium_static(m_all, width=None, height=250)
 
 except Exception as e:

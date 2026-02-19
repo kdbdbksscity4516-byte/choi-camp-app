@@ -66,7 +66,6 @@ try:
                 person = str(row['수행자']).strip() if '수행자' in row and row['수행자'] != "" else "담당자미정"
                 phone = str(row['수행자전화번호']).strip() if '수행자전화번호' in row and row['수행자전화번호'] != "" else ""
                 
-                # 시간 표시 (요약본)
                 time_range = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and row['종료시간'] != "" else row['시간']
                 
                 if phone:
@@ -133,20 +132,24 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today, width=None, height=350)
 
-        # 📝 [종료시간 반영] 상세 활동 리스트
+        # 📝 상세 활동 리스트 (상세주소 추가 반영)
         st.subheader("📝 상세 활동 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
-                # 제목 영역에 종료 시간까지 표시
                 display_time = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and row['종료시간'] != "" else row['시간']
                 st.markdown(f"### {display_time} | {row['행사명']}")
                 
-                # 주소 정보
+                # 1. 일반 주소
                 address_val = str(row['주소']).strip() if '주소' in row and row['주소'] != "" else "주소 정보 없음"
                 st.write(f"📍 **주소:** {address_val}")
                 
-                # 수행자 정보
+                # 2. [신규 추가] 상세 주소
+                detail_address = str(row['상세주소']).strip() if '상세주소' in row and row['상세주소'] != "" else ""
+                if detail_address:
+                    st.write(f"🏢 **상세주소:** {detail_address}")
+                
+                # 3. 수행자 정보
                 person_label = str(row['수행자']).strip() if '수행자' in row and row['수행자'] != "" else "담당자미정"
                 st.write(f"👤 **수행자:** {person_label}")
                 
@@ -168,7 +171,9 @@ try:
     all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
     all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
     if not all_map_df.empty:
-        m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=11)
+        center_lat = all_map_df['위도'].mean()
+        center_lon = all_map_df['경도'].mean()
+        m_all = folium.Map(location=[center_lat, center_lon], zoom_start=11)
         for _, r in all_map_df.iterrows():
             m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
             folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)

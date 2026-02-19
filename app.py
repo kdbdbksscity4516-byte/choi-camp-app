@@ -66,12 +66,15 @@ try:
                 person = str(row['수행자']).strip() if '수행자' in row and row['수행자'] != "" else "담당자미정"
                 phone = str(row['수행자전화번호']).strip() if '수행자전화번호' in row and row['수행자전화번호'] != "" else ""
                 
+                # 시간 표시 (요약본)
+                time_range = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and row['종료시간'] != "" else row['시간']
+                
                 if phone:
                     clean_phone = phone.replace("-", "")
                     contact_html = f"<a href='tel:{clean_phone}' style='color: #007bff; text-decoration: underline; font-weight: bold;'>{person}</a>"
-                    st.markdown(f"{status_icon} **{row['시간']}** | {row['행사명']} ({contact_html})", unsafe_allow_html=True)
+                    st.markdown(f"{status_icon} **{time_range}** | {row['행사명']} ({contact_html})", unsafe_allow_html=True)
                 else:
-                    st.markdown(f"{status_icon} **{row['시간']}** | {row['행사명']} ({person})")
+                    st.markdown(f"{status_icon} **{time_range}** | {row['행사명']} ({person})")
         else:
             st.write("오늘 예정된 일정이 없습니다.")
 
@@ -130,14 +133,16 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today, width=None, height=350)
 
-        # 📝 [주소 추가] 상세 활동 리스트
+        # 📝 [종료시간 반영] 상세 활동 리스트
         st.subheader("📝 상세 활동 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
-                st.markdown(f"### {row['시간']} | {row['행사명']}")
+                # 제목 영역에 종료 시간까지 표시
+                display_time = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and row['종료시간'] != "" else row['시간']
+                st.markdown(f"### {display_time} | {row['행사명']}")
                 
-                # 주소 정보 추가
+                # 주소 정보
                 address_val = str(row['주소']).strip() if '주소' in row and row['주소'] != "" else "주소 정보 없음"
                 st.write(f"📍 **주소:** {address_val}")
                 
@@ -157,23 +162,19 @@ try:
                     if st.button("🔄 재선택", key=f"re_at_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # 📊 선거 운동 누적 활동 분석 지도
+    # 📊 누적 분석 지도
     st.divider()
     st.subheader("📊 선거 운동 누적 활동 분석")
     all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
     all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
-    
     if not all_map_df.empty:
-        center_lat = all_map_df['위도'].mean()
-        center_lon = all_map_df['경도'].mean()
-        m_all = folium.Map(location=[center_lat, center_lon], zoom_start=11)
+        m_all = folium.Map(location=[all_map_df['위도'].mean(), all_map_df['경도'].mean()], zoom_start=11)
         for _, r in all_map_df.iterrows():
             m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
             folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)
     else:
         m_all = folium.Map(location=[37.5665, 126.9780], zoom_start=11)
-        st.info("아직 누적 기록(참석/불참석)이 없습니다.")
-
+        st.info("아직 누적 기록이 없습니다.")
     folium_static(m_all, width=None, height=250)
 
 except Exception as e:

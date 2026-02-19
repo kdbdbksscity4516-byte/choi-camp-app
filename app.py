@@ -130,13 +130,21 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today, width=None, height=350)
 
+        # 📝 [주소 추가] 상세 활동 리스트
         st.subheader("📝 상세 활동 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
                 st.markdown(f"### {row['시간']} | {row['행사명']}")
+                
+                # 주소 정보 추가
+                address_val = str(row['주소']).strip() if '주소' in row and row['주소'] != "" else "주소 정보 없음"
+                st.write(f"📍 **주소:** {address_val}")
+                
+                # 수행자 정보
                 person_label = str(row['수행자']).strip() if '수행자' in row and row['수행자'] != "" else "담당자미정"
-                st.write(f"👤 수행자: {person_label}")
+                st.write(f"👤 **수행자:** {person_label}")
+                
                 status = str(row['참석여부']).strip()
                 if status == "미체크":
                     c1, c2 = st.columns(2)
@@ -149,27 +157,22 @@ try:
                     if st.button("🔄 재선택", key=f"re_at_{orig_idx}"): update_sheet_status(orig_idx, "미체크"); time.sleep(1); st.rerun()
                 st.link_button("🚕 카카오내비", f"https://map.kakao.com/link/search/{urllib.parse.quote(str(row['주소']))}")
 
-    # 📊 [보강] 선거 운동 누적 활동 분석 지도
+    # 📊 선거 운동 누적 활동 분석 지도
     st.divider()
     st.subheader("📊 선거 운동 누적 활동 분석")
-    
-    # 참석/불참석 데이터만 필터링
     all_map_df = df[df['참석여부'].isin(['참석', '불참석'])]
     all_map_df = all_map_df[all_map_df['위도'].notna() & all_map_df['경도'].notna()]
     
-    # 지도의 중심점 계산 (데이터가 없으면 서울 시청 기준)
     if not all_map_df.empty:
         center_lat = all_map_df['위도'].mean()
         center_lon = all_map_df['경도'].mean()
         m_all = folium.Map(location=[center_lat, center_lon], zoom_start=11)
-        
         for _, r in all_map_df.iterrows():
             m_color, m_icon = ('blue', 'check') if r['참석여부'] == '참석' else ('red', 'remove')
             folium.Marker([r['위도'], r['경도']], icon=folium.Icon(color=m_color, icon=m_icon)).add_to(m_all)
     else:
-        # 데이터가 없을 때 보여줄 기본 지도 (서울)
         m_all = folium.Map(location=[37.5665, 126.9780], zoom_start=11)
-        st.info("아직 누적 기록(참석/불참석)이 없습니다. 활동 기록을 남기면 여기에 표시됩니다.")
+        st.info("아직 누적 기록(참석/불참석)이 없습니다.")
 
     folium_static(m_all, width=None, height=250)
 

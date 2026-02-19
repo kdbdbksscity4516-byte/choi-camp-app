@@ -49,7 +49,7 @@ try:
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
-    # --- [금일 일정 요약] ---
+    # --- [금일 일정 요약 - target='_self' 적용] ---
     today_str_check = now_kst.strftime('%Y-%m-%d')
     today_summary_df = df[df['날짜_str'] == today_str_check].copy()
     
@@ -70,7 +70,8 @@ try:
                 
                 if phone:
                     clean_phone = phone.replace("-", "")
-                    contact_html = f"<a href='tel:{clean_phone}' style='color: #007bff; text-decoration: underline; font-weight: bold;'>{person}</a>"
+                    # target='_self' 추가: 안드로이드에서 인터넷 창 대신 전화 앱 실행 유도
+                    contact_html = f"<a href='tel:{clean_phone}' target='_self' style='color: #007bff; text-decoration: underline; font-weight: bold;'>{person}</a>"
                     st.markdown(f"{status_icon} **{time_range}** | {row['행사명']} ({contact_html})", unsafe_allow_html=True)
                 else:
                     st.markdown(f"{status_icon} **{time_range}** | {row['행사명']} ({person})")
@@ -132,7 +133,7 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today, width=None, height=350)
 
-        # 📝 상세 활동 리스트 (상세주소 추가 반영)
+        # 📝 상세 활동 리스트
         st.subheader("📝 상세 활동 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
@@ -140,16 +141,13 @@ try:
                 display_time = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and row['종료시간'] != "" else row['시간']
                 st.markdown(f"### {display_time} | {row['행사명']}")
                 
-                # 1. 일반 주소
                 address_val = str(row['주소']).strip() if '주소' in row and row['주소'] != "" else "주소 정보 없음"
                 st.write(f"📍 **주소:** {address_val}")
                 
-                # 2. [신규 추가] 상세 주소
                 detail_address = str(row['상세주소']).strip() if '상세주소' in row and row['상세주소'] != "" else ""
                 if detail_address:
                     st.write(f"🏢 **상세주소:** {detail_address}")
                 
-                # 3. 수행자 정보
                 person_label = str(row['수행자']).strip() if '수행자' in row and row['수행자'] != "" else "담당자미정"
                 st.write(f"👤 **수행자:** {person_label}")
                 

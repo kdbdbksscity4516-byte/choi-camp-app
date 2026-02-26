@@ -38,9 +38,17 @@ try:
     df.loc[df['참석여부'] == "", '참석여부'] = "미체크"
     df['위도'] = pd.to_numeric(df['위도'], errors='coerce')
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
+    
+    # [추가] 우선순위 숫자 변환 (비어있으면 아주 큰 숫자 999 부여해서 뒤로 보냄)
+    if '우선순위' in df.columns:
+        df['우선순위'] = pd.to_numeric(df['우선순위'], errors='coerce').fillna(999)
+    else:
+        df['우선순위'] = 999
+        
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    raw_img_url = "https://github.com/kdbdbksscity4516-byte/choi-camp-app/raw/main/banner.png"
+    # 사진 주소 갱신용 (?v=1)
+    raw_img_url = "https://github.com/kdbdbksscity4516-byte/choi-camp-app/raw/main/banner.png?v=1"
     st.image(raw_img_url, use_container_width=True)
 
     st.title("최웅식 후보 동선 최적화 & 활동 분석")
@@ -49,14 +57,15 @@ try:
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
-    # --- [금일 일정 요약 - target='_self' 적용] ---
+    # --- [금일 일정 요약 - 우선순위 반영 정렬] ---
     today_str_check = now_kst.strftime('%Y-%m-%d')
     today_summary_df = df[df['날짜_str'] == today_str_check].copy()
     
     with st.expander("📅 금일 전체 일정 요약 (수행자 클릭 시 전화연결)", expanded=True):
         if not today_summary_df.empty:
             today_summary_df['temp_time'] = pd.to_datetime(today_summary_df['시간'], errors='coerce')
-            summary_list = today_summary_df.sort_values('temp_time')
+            # 정렬 순서: 우선순위(작은순) -> 시간(빠른순)
+            summary_list = today_summary_df.sort_values(['우선순위', 'temp_time'])
             
             for _, row in summary_list.iterrows():
                 status_icon = "⚪"
@@ -66,11 +75,10 @@ try:
                 person = str(row['수행자']).strip() if '수행자' in row and row['수행자'] != "" else "담당자미정"
                 phone = str(row['수행자전화번호']).strip() if '수행자전화번호' in row and row['수행자전화번호'] != "" else ""
                 
-                time_range = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and row['종료시간'] != "" else row['시간']
+                time_range = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and str(row['종료시간']).strip() != "" else row['시간']
                 
                 if phone:
                     clean_phone = phone.replace("-", "")
-                    # target='_self' 추가: 안드로이드에서 인터넷 창 대신 전화 앱 실행 유도
                     contact_html = f"<a href='tel:{clean_phone}' target='_self' style='color: #007bff; text-decoration: underline; font-weight: bold;'>{person}</a>"
                     st.markdown(f"{status_icon} **{time_range}** | {row['행사명']} ({contact_html})", unsafe_allow_html=True)
                 else:
@@ -87,39 +95,8 @@ try:
 
     if not day_df.empty:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
-        day_df['참석시간_dt'] = pd.to_datetime(day_df['참석시간'], errors='coerce')
-        
-        times = sorted(day_df['temp_time_dt'].dropna().unique())
-        final_list = []
-        current_anchor = None
-
-        for t in times:
-            group = day_df[day_df['temp_time_dt'] == t].copy()
-            group_att = group[group['참석여부'] == '참석'].sort_values('참석시간_dt')
-            if not group_att.empty:
-                last_att = group_att.iloc[-1]
-                if not pd.isna(last_att['위도']):
-                    current_anchor = (last_att['위도'], last_att['경도'])
-            
-            group_pending = group[group['참석여부'] == '미체크'].copy()
-            if not group_pending.empty:
-                if current_anchor is None:
-                    first_row = group_pending.iloc[0]
-                    if not pd.isna(first_row['위도']):
-                        current_anchor = (first_row['위도'], first_row['경도'])
-                
-                if current_anchor:
-                    group_pending['dist'] = group_pending.apply(lambda r: geodesic(current_anchor, (r['위도'], r['경도'])).meters if not pd.isna(r['위도']) else 999999, axis=1)
-                    group_pending = group_pending.sort_values('dist')
-                
-                last_pending = group_pending.iloc[-1]
-                if not pd.isna(last_pending['위도']):
-                    current_anchor = (last_pending['위도'], last_pending['경도'])
-            
-            group_no = group[group['참석여부'] == '불참석']
-            final_list.append(pd.concat([group_att, group_pending, group_no]))
-
-        display_df = pd.concat(final_list)
+        # [수정] 상세 리스트도 우선순위와 시간을 함께 고려하여 정렬
+        display_df = day_df.sort_values(['우선순위', 'temp_time_dt']).copy()
 
         st.subheader(f"📍 {selected_date} 상세 이동 경로")
         map_df_today = display_df[display_df['위도'].notna() & display_df['경도'].notna()]
@@ -133,12 +110,12 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today, width=None, height=350)
 
-        # 📝 상세 활동 리스트
+        # 📝 상세 활동 리스트 (우선순위 정렬 반영)
         st.subheader("📝 상세 활동 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
             with st.container(border=True):
-                display_time = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and row['종료시간'] != "" else row['시간']
+                display_time = f"{row['시간']} ~ {row['종료시간']}" if '종료시간' in row and str(row['종료시간']).strip() != "" else row['시간']
                 st.markdown(f"### {display_time} | {row['행사명']}")
                 
                 address_val = str(row['주소']).strip() if '주소' in row and row['주소'] != "" else "주소 정보 없음"
@@ -181,4 +158,4 @@ try:
     folium_static(m_all, width=None, height=250)
 
 except Exception as e:
-    st.error(f"오류: {e}")
+    st.error(f"오류 발생: {e}")

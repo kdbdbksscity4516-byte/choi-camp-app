@@ -154,8 +154,8 @@ try:
         m_all = folium.Map(location=[37.5665, 126.9780], zoom_start=11)
         st.info("아직 누적 기록이 없습니다.")
         
-    # 지도의 세로 높이를 450에서 700으로 늘려 훨씬 시원하게 보이도록 수정했습니다.
-    folium_static(m_all, width=None, height=700)
+    # 지도 세로 높이를 1000으로 늘려 화면을 꽉 채우도록 설정했습니다.
+    folium_static(m_all, width=None, height=1000)
 
 except Exception as e:
     st.error(f"오류 발생: {e}")

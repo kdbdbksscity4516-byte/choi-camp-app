@@ -39,7 +39,7 @@ try:
     df['위도'] = pd.to_numeric(df['위도'], errors='coerce')
     df['경도'] = pd.to_numeric(df['경도'], errors='coerce')
     
-    # [추가] 우선순위 숫자 변환 (비어있으면 아주 큰 숫자 999 부여해서 뒤로 보냄)
+    # 우선순위 숫자 변환
     if '우선순위' in df.columns:
         df['우선순위'] = pd.to_numeric(df['우선순위'], errors='coerce').fillna(999)
     else:
@@ -47,7 +47,7 @@ try:
         
     df['날짜_str'] = df['날짜'].astype(str).str.strip()
 
-    # 사진 주소 갱신용 (?v=1)
+    # 사진 주소 갱신용
     raw_img_url = "https://github.com/kdbdbksscity4516-byte/choi-camp-app/raw/main/banner.png?v=1"
     st.image(raw_img_url, use_container_width=True)
 
@@ -57,14 +57,13 @@ try:
         components.html("<script>window.parent.location.reload();</script>", height=0)
         st.stop()
 
-    # --- [금일 일정 요약 - 우선순위 반영 정렬] ---
+    # --- [금일 일정 요약] ---
     today_str_check = now_kst.strftime('%Y-%m-%d')
     today_summary_df = df[df['날짜_str'] == today_str_check].copy()
     
     with st.expander("📅 금일 전체 일정 요약 (수행자 클릭 시 전화연결)", expanded=True):
         if not today_summary_df.empty:
             today_summary_df['temp_time'] = pd.to_datetime(today_summary_df['시간'], errors='coerce')
-            # 정렬 순서: 우선순위(작은순) -> 시간(빠른순)
             summary_list = today_summary_df.sort_values(['우선순위', 'temp_time'])
             
             for _, row in summary_list.iterrows():
@@ -95,7 +94,6 @@ try:
 
     if not day_df.empty:
         day_df['temp_time_dt'] = pd.to_datetime(day_df['시간'], errors='coerce')
-        # [수정] 상세 리스트도 우선순위와 시간을 함께 고려하여 정렬
         display_df = day_df.sort_values(['우선순위', 'temp_time_dt']).copy()
 
         st.subheader(f"📍 {selected_date} 상세 이동 경로")
@@ -110,7 +108,7 @@ try:
             if len(line_pts) > 1: folium.PolyLine(line_pts, color="red", weight=3).add_to(m_today)
             folium_static(m_today, width=None, height=350)
 
-        # 📝 상세 활동 리스트 (우선순위 정렬 반영)
+        # 📝 상세 활동 리스트
         st.subheader("📝 상세 활동 리스트")
         for _, row in display_df.iterrows():
             orig_idx = row['index']
@@ -155,7 +153,9 @@ try:
     else:
         m_all = folium.Map(location=[37.5665, 126.9780], zoom_start=11)
         st.info("아직 누적 기록이 없습니다.")
-    folium_static(m_all, width=None, height=250)
+        
+    # 지도의 세로 높이를 450에서 700으로 늘려 훨씬 시원하게 보이도록 수정했습니다.
+    folium_static(m_all, width=None, height=700)
 
 except Exception as e:
     st.error(f"오류 발생: {e}")
